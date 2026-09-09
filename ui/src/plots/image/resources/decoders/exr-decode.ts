@@ -45,10 +45,10 @@ import type {
 import { decodeExr as decodeExrPure } from "./exr.ts";
 import { decodeExrPreferWasm } from "./exr-wasm.ts";
 import { hasExrSelection, type ExrSelection } from "./exr-full.ts";
-import { describeExr } from "./exr-describe.ts";
+import { describeExr, resolvePartIndex } from "./exr-describe.ts";
 import { loadExrDecoder } from "./wasm-inline/wasm-exr-inline.ts";
 import { decodePoolAvailable, getDecodePool } from "./decode-pool.ts";
-import { canReplayInline } from "./decode-pool-core.ts";
+import { canReplayInline, isPoolTerminal } from "./decode-pool-core.ts";
 import type {
   ExrGpuCsrPayload,
   ExrImagePayload,
@@ -69,26 +69,40 @@ type OkResponse = Extract<ExrWorkerResponse, { ok: true }>;
 const EXR_INLINE_REPLAY_MAX_DECODED_BYTES = 32 * 1024 * 1024;
 
 /**
- * Bytes the decoded pixels will occupy — `w · h · Σ bytesPerSample` over the
- * largest part — read from the HEADER alone (`describeExr` walks attributes, it
- * never touches pixel data, so this is safe on the main thread for any file).
- * A header that will not parse falls back to `byteLength × 8`: EXR compression
- * rarely does better than 8:1, so that under-estimates rather than lets a
- * genuinely huge decode through. Exported for its unit test.
+ * Bytes the decoded pixels will occupy, read from the HEADER alone
+ * (`describeExr` walks attributes and never touches pixel data, so this is safe
+ * on the main thread for any file): `w · h · Σ bytesPerSample` of the part that
+ * would actually be decoded — the SELECTED one, part 0 by default, not the
+ * largest, since only that part's pixels are produced.
+ *
+ * Two cases refuse to be measured from the header and fall back to
+ * `byteLength × 8`:
+ *   - an unparseable header (not an EXR, truncated);
+ *   - a DEEP part, where each pixel holds a LIST of samples (5–100 of them is
+ *     ordinary) that the header does not count. The flat extent is then a floor,
+ *     not an estimate, and the compressed file size is the only signal that
+ *     tracks the real sample count — so the larger of the two wins. Without this
+ *     a deep file would sail through the gate that a plain file of the same
+ *     dimensions fails.
+ * Assuming 8:1 compression OVER-states the decode for most files, which is the
+ * point: an unknown header errs toward refusing a replay, never toward freezing
+ * the tab on one. Exported for its unit test.
  */
-export function decodedByteEstimate(bytes: ArrayBuffer): number {
+export function decodedByteEstimate(bytes: ArrayBuffer, select?: ExrSelection): number {
+  const fromFileSize = bytes.byteLength * 8;
   try {
-    let largest = 0;
-    for (const part of describeExr(bytes).parts) {
-      let perPixel = 0;
-      for (const ch of part.channels) perPixel += ch.pixelType === 1 ? 2 : 4; // HALF is 2, UINT/FLOAT 4
-      largest = Math.max(largest, part.width * part.height * perPixel);
-    }
-    if (largest > 0) return largest;
+    const desc = describeExr(bytes);
+    const part = desc.parts[resolvePartIndex(desc, select?.part)];
+    if (!part) return fromFileSize;
+    let perPixel = 0;
+    for (const ch of part.channels) perPixel += ch.pixelType === 1 ? 2 : 4; // HALF is 2, UINT/FLOAT 4
+    const flat = part.width * part.height * perPixel;
+    if (flat <= 0) return fromFileSize;
+    return part.deep ? Math.max(flat, fromFileSize) : flat;
   } catch {
-    // Not an EXR header we can walk — fall through to the size estimate.
+    // Not an EXR header we can walk (or no such part) — fall back on the bytes.
   }
-  return bytes.byteLength * 8;
+  return fromFileSize;
 }
 
 /** True when this runtime can host the pool's Web Workers (false under node). */
@@ -273,7 +287,7 @@ async function decodeFull(src: ImageSource, select?: ExrSelection): Promise<Deco
       // running the decode, and replaying it inline can freeze the tab. Nor is
       // a crash on a large DECODE, where the decode itself is the likely cause;
       // a worker that never started is exempt, since nothing ran.
-      if (!canReplayInline(err, decodedByteEstimate(bytes), EXR_INLINE_REPLAY_MAX_DECODED_BYTES)) throw err;
+      if (!canReplayInline(err, decodedByteEstimate(bytes, select), EXR_INLINE_REPLAY_MAX_DECODED_BYTES)) throw err;
       return decodeExrPreferWasm(bytes.slice(0), undefined, select);
     }
   }
@@ -306,10 +320,13 @@ export async function decodeExr(
     try {
       return await decodeDeepAware(src.bytes);
     } catch (deepErr) {
-      // A terminal pool failure is terminal HERE too: falling through would
-      // send the very same file back through the pool and pay a second full
-      // timeout before the pane finally shows an error.
-      if (!canReplayInline(deepErr, decodedByteEstimate(src.bytes), EXR_INLINE_REPLAY_MAX_DECODED_BYTES)) throw deepErr;
+      // A TERMINAL pool failure is terminal here too: falling through would send
+      // the same file back through the pool and pay a second full timeout before
+      // the pane finally shows an error. Note the test is by CODE alone — the
+      // fall-through leads to another POOL decode, not to the main thread, so a
+      // one-off worker crash on a huge file must still get its second try; the
+      // size gate belongs at the inline sites, not here.
+      if (isPoolTerminal(deepErr)) throw deepErr;
       // Deep-aware path failed (worker crash / broken retained read) → fall
       // through to the ordinary one-shot decode chain below (no slider).
     }
@@ -321,7 +338,7 @@ export async function decodeExr(
     // large decode) stops the chain here. `decodeExrPure` is a main-thread
     // decode like any other: replaying a decode the worker already spent 30 s
     // on would freeze the tab exactly as the inline WASM path would.
-    if (!canReplayInline(fullErr, decodedByteEstimate(src.bytes), EXR_INLINE_REPLAY_MAX_DECODED_BYTES)) throw fullErr;
+    if (!canReplayInline(fullErr, decodedByteEstimate(src.bytes, select), EXR_INLINE_REPLAY_MAX_DECODED_BYTES)) throw fullErr;
     // The pure reader has no selection support — with a selection, the full
     // decoder's error (e.g. "no channel named X") is the real answer.
     if (hasExrSelection(select)) {

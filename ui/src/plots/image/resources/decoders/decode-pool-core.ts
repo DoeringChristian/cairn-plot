@@ -117,6 +117,17 @@ function isRetryableInline(err: unknown): boolean {
 }
 
 /**
+ * True when the pool has ruled this failure TERMINAL for the job: the work is
+ * already under way, or the caller/pool is gone, so retrying the SAME job is
+ * pointless (`timeout`, `aborted`, `disposed`, `affinity`). Unlike
+ * `canReplayInline` it asks nothing about cost — use it where the retry would
+ * go back to the POOL and no main-thread time is at stake.
+ */
+export function isPoolTerminal(err: unknown): boolean {
+  return !isRetryableInline(err);
+}
+
+/**
  * Default ceiling on the work a caller may redo inline after a `"worker-error"`,
  * for callers with no better measure than the encoded size. Each decoder passes
  * its OWN budget: the cost of a main-thread replay is a property of the format,
@@ -362,9 +373,15 @@ export class DecodePool {
     this.abandoned[worker] = (this.abandoned[worker] ?? 0) + 1;
     const timer = setTimeout(() => {
       this.reapers.delete(id);
+      // Only jobs dispatched to this worker SINCE the abandonment can still be
+      // waiting on it, so this message is addressed to them: they are collateral,
+      // they never got their turn, and retrying them is safe.
       this.terminate(
         worker,
-        new DecodePoolError("cairn-plot decode pool: worker never returned from an abandoned decode", "worker-error"),
+        new DecodePoolError(
+          "cairn-plot decode pool: dropped — this worker never returned from an earlier, abandoned decode; retrying is safe",
+          "worker-error",
+        ),
       );
       this.pump();
     }, this.abandonReapMs);

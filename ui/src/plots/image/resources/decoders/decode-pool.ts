@@ -41,6 +41,7 @@ function spawn(index: number): PoolWorker {
       const w = new mod.default();
       w.addEventListener("message", (e: MessageEvent) => pool?.onMessage(index, e.data));
       w.addEventListener("error", () => {
+        if (dead) return; // a terminated slot may have been respawned since
         const err = new Error("cairn-plot decode pool: worker crashed");
         // Nothing was ever handed to it → it cannot have died on a decode.
         if (posted) pool?.onWorkerError(index, err);
@@ -52,7 +53,12 @@ function spawn(index: number): PoolWorker {
     // The module never loaded, or `new Worker` was refused outright (offline
     // `file://`, a strict CSP). Nothing ran, and the caller may safely redo the
     // whole decode inline however big it is — this is the path such pages live on.
-    .catch((err) => pool?.onSpawnFailed(index, err instanceof Error ? err : new Error(String(err))));
+    .catch((err) => {
+      if (dead) return; // this slot was terminated; a stale rejection must not hit its successor
+      const e = err instanceof Error ? err : new Error(String(err));
+      if (posted) pool?.onWorkerError(index, e);
+      else pool?.onSpawnFailed(index, e);
+    });
   return {
     post(msg, transfer) {
       if (worker) { worker.postMessage(msg, transfer); posted = true; }

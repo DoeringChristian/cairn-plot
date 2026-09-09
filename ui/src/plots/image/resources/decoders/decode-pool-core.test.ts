@@ -208,7 +208,9 @@ test("a worker that never returns from an abandoned job is reaped", async () => 
   // killed rather than left holding a slot — and whatever was queued behind it
   // is told so instead of hanging.
   assert.equal(workers[0]!.terminated, true);
-  await assert.rejects(b, poolErr("worker-error", /never returned/));
+  // `b` is collateral — it never got its turn — so its error says which decode
+  // took it down and that retrying is safe, rather than reading as its own crash.
+  await assert.rejects(b, poolErr("worker-error", /earlier, abandoned decode; retrying is safe/));
   assert.deepEqual(pool.stats().abandoned, [0]);
   // ...and the slot is usable again.
   const c = pool.run(job("c"));
