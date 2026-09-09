@@ -198,7 +198,7 @@ function envelopeColumns(
     minI = maxI = -1;
   };
   for (let i = start; i < end; i++) {
-    const c = Math.min(columns - 1, Math.max(0, Math.floor((axis[i]! - binLo) / width)));
+    const c = columnOf(axis[i]!, binLo, width, columns);
     if (c !== col) { flush(); col = c; }
     const y = ys[i]!;
     if (Number.isNaN(y) || y < lo || y > hi) continue;
@@ -224,7 +224,6 @@ function mergeOnGrid(picks: readonly Pick[], grid: Grid): Row[] {
   // column would draw them inside the frame, which on a non-uniform x looks
   // like a spike; they keep their exact x and their own rows instead.
   const outside = new Map<number, Row>();
-  let used = 0;
 
   const cellAt = (column: number, slot: number, exactX: number): Row => {
     const at = column * SLOTS + slot;
@@ -235,7 +234,6 @@ function mergeOnGrid(picks: readonly Pick[], grid: Grid): Row[] {
       // for the tooltip to show instead of a fractional slot centre.
       row = { x: xOfSlot(column, slot, grid), __x: exactX };
       cells[at] = row;
-      used++;
     }
     return row;
   };
@@ -267,12 +265,15 @@ function mergeOnGrid(picks: readonly Pick[], grid: Grid): Row[] {
       } else {
         const c = columnOf(pos, grid.binLo, grid.width, grid.columns);
         if (c !== col) { col = c; slot = 0; } else slot++;
-        // `reduceToColumns` emits at most SLOTS picks per column and this walks
-        // the same column arithmetic, so overflowing is a broken invariant, not
-        // a case to absorb: silently reusing the last slot would drop a point.
-        if (slot >= SLOTS) {
-          throw new Error(`render-rows: ${slot + 1} picks in column ${c} of ${grid.columns} (max ${SLOTS})`);
-        }
+        // For a CONTIGUOUS run of picks in one column the cap is unreachable:
+        // `reduceToColumns` emits at most SLOTS per column and shares
+        // `columnOf` with this loop, so the runs agree exactly. But the run is
+        // only reset when the column CHANGES, so a non-monotonic axis (or a
+        // NaN position, which `columnOf` puts in column 0) can return to a
+        // column and push past the cap. That degrades to overwriting the last
+        // slot — this is the render path, and losing one pick of a broken
+        // series is always better than throwing the chart away.
+        if (slot >= SLOTS) slot = SLOTS - 1;
         row = cellAt(c, slot, xs[j]!);
       }
       row[key] = ys[j]!;
@@ -293,6 +294,14 @@ function mergeOnGrid(picks: readonly Pick[], grid: Grid): Row[] {
     const rawKey = `${key}__raw`;
     let rawCol = -1;
     let nth = 0;
+    // The slot the column's FIRST envelope pick took. The second must not land
+    // on it: both picks searching outwards from their own `want` can otherwise
+    // converge on the same row, and the band — whose whole content is the
+    // spread between the two — collapses to a point. This bites exactly where
+    // the band matters least visually but most often: a column with only one
+    // or two open curve slots, which is most columns once the point count is
+    // near 2 per column.
+    let firstSlot = -1;
     for (let i = 0; i < raw.length; i++) {
       const j = raw[i]!;
       const pos = axis[j]!;
@@ -300,16 +309,19 @@ function mergeOnGrid(picks: readonly Pick[], grid: Grid): Row[] {
       const c = columnOf(pos, grid.binLo, grid.width, grid.columns);
       nth = c === rawCol ? nth + 1 : 0;
       rawCol = c;
-      const slot = openSlotNear(cells, c, nth === 0 ? 1 : 3);
+      const first = nth === 0;
+      const slot = openSlotNear(cells, c, first ? 1 : 3, first ? -1 : firstSlot);
+      if (first) firstSlot = slot;
       cellAt(c, slot, xs[j]!)[rawKey] = rawYs[j]!;
     }
   }
 
-  const grid_ = new Array<Row>(used);
-  let n = 0;
+  // Built by `push`: a hole (an `undefined` row inside the array) would reach
+  // Recharts as a row with no `x` at all, so the length is never assumed.
+  const grid_: Row[] = [];
   for (let i = 0; i < cells.length; i++) {
     const row = cells[i];
-    if (row !== undefined) grid_[n++] = row;
+    if (row !== undefined) grid_.push(row);
   }
   if (outside.size === 0) return grid_;
   // Grid rows are ascending by construction and every outside row is beyond one
@@ -325,19 +337,28 @@ function mergeOnGrid(picks: readonly Pick[], grid: Grid): Row[] {
  * The slot in `column` nearest `want` that a curve has already opened, or
  * `want` itself when the column is empty.
  *
+ * `exclude` (-1 for none) is a slot the caller has already used for this
+ * column's other envelope pick: reusing it would write the second value over
+ * the first in the same row and flatten the band. When it is the only open
+ * slot, a NEW cell is opened instead — one extra row is a far smaller cost
+ * than a band that says nothing.
+ *
  * SLOTS is 5, so this is a handful of array reads — cheaper than the row it
  * saves allocating, and much cheaper than the blank tooltip entry that row
  * would produce.
  */
-function openSlotNear(cells: ReadonlyArray<Row | undefined>, column: number, want: number): number {
+function openSlotNear(
+  cells: ReadonlyArray<Row | undefined>, column: number, want: number, exclude = -1,
+): number {
   const base = column * SLOTS;
   for (let d = 0; d < SLOTS; d++) {
     const lo = want - d;
-    if (lo >= 0 && cells[base + lo] !== undefined) return lo;
+    if (lo >= 0 && lo !== exclude && cells[base + lo] !== undefined) return lo;
     const hi = want + d;
-    if (hi < SLOTS && cells[base + hi] !== undefined) return hi;
+    if (hi < SLOTS && hi !== exclude && cells[base + hi] !== undefined) return hi;
   }
-  return want;
+  if (want !== exclude) return want;
+  return want + 1 < SLOTS ? want + 1 : want - 1;
 }
 
 /** The shared x of one slot, in DATA units. */

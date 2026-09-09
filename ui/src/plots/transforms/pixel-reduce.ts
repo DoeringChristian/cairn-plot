@@ -9,6 +9,11 @@
  * opened — so they share this.
  */
 export function columnOf(pos: number, binLo: number, width: number, columns: number): number {
+  // A non-finite `pos` (a NaN x in the authored data) has no column of its own.
+  // It goes in column 0 rather than returning NaN: every caller uses the result
+  // as an array index, and `cells[NaN]` is a string property, not a cell — one
+  // NaN x would otherwise punch a hole in the rendered row array.
+  if (!Number.isFinite(pos)) return 0;
   return Math.min(columns - 1, Math.max(0, Math.floor((pos - binLo) / width)));
 }
 

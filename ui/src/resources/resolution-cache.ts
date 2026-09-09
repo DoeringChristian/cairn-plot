@@ -93,12 +93,15 @@ function descriptorContentId(node: object): string | null {
   if (record.kind === "plot" && typeof record.type === "string" && record.data != null) {
     const resolved = contentIdResolver?.(record.type, record.data);
     memoisable = resolved !== undefined;
-    // Namespaced the same way the fallback is: a resolver's id is only unique
-    // WITHIN its plot type, so two types that both summarise their data as,
-    // say, "n=100:x0..x99" must not collide on one cache entry.
-    key = resolved !== undefined
-      ? `plot:${record.type}:${resolved.contentId}`
-      : `plot:${record.type}:${canonicalJson(record.data)}`;
+    // Namespaced because a resolver's id is only unique WITHIN its plot type:
+    // two types that both summarise their data as, say, "n=100:x0..x99" must
+    // not collide on one cache entry. Canonical JSON is the fallback for BOTH
+    // "not registered yet" (`resolved === undefined`) and "registered but
+    // declines to summarise this data" (`contentId === null`) — the second is
+    // the common case (every plot type without a `contentId()`, and scalar's
+    // non-inline data), and keying those on the literal `null` would collapse
+    // every image node in a document onto one entry.
+    key = `plot:${record.type}:${resolved?.contentId ?? canonicalJson(record.data)}`;
   } else if (record.kind === "compare" && typeof record.type === "string" && Array.isArray(record.operands)) {
     key = `compare:${record.type}:${String(record.presentation ?? "")}:${String(record.strategy ?? "")}:${String(record.referenceIndex ?? "")}:${canonicalJson(record.operands)}`;
   }

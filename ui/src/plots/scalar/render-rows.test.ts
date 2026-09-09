@@ -192,6 +192,50 @@ test("the envelope lands in cells the curve opened: no blank-valued rows", () =>
   assert.deepEqual(blank, [], `${blank.length} of ${rows.length} rows have no curve value`);
 });
 
+test("a column's two envelope picks land in DIFFERENT rows", () => {
+  // Near two points per column is the case that broke: a column then has only
+  // one or two curve-opened slots, and both envelope picks searching outwards
+  // from their own preferred slot used to converge on the SAME row — the second
+  // value overwrote the first and the band collapsed to a point.
+  const cache = new PreparedSeriesCache();
+  const n = 1600;
+  const columns = 746;
+  const points = Array.from({ length: n }, (_, i) => ({ x: i, y: i % 2 === 0 ? -100 : 100 }));
+  const p = cache.prepare({ key: "a", label: "a", color: "#000", points }, { ...OPTS, smoothing: 0.9 });
+  const rows = buildRenderRows([p], ALL, 0, n - 1, columns, false);
+
+  const raw = rows.filter((r) => r.a__raw !== undefined).length;
+  assert.ok(raw >= 1400, `only ${raw} envelope rows for ${columns} columns (≈2 per column expected)`);
+  assert.ok(raw <= 2 * columns + 2, `${raw} envelope rows > ${2 * columns + 2}`);
+
+  // ... and the two rows of a column carry the two ENDS of the band.
+  const width = (n - 1) / columns;
+  const byColumn = new Map<number, Set<number>>();
+  for (const r of rows) {
+    if (r.a__raw === undefined) continue;
+    const c = Math.min(columns - 1, Math.floor(r.x / width));
+    let values = byColumn.get(c);
+    if (!values) { values = new Set(); byColumn.set(c, values); }
+    values.add(r.a__raw as number);
+  }
+  const spread = Array.from(byColumn.values()).filter((v) => v.size >= 2).length;
+  assert.ok(spread >= 700, `only ${spread} of ${byColumn.size} columns show a raw spread`);
+  // The envelope still rides curve-opened cells: no row with a band but no line.
+  assert.deepEqual(rows.filter((r) => r.a === undefined), []);
+});
+
+test("a non-finite x cannot punch a hole in the rows", () => {
+  const cache = new PreparedSeriesCache();
+  const n = 5000;
+  const points = Array.from({ length: n }, (_, i) => ({ x: i === 2500 ? NaN : i, y: i % 17 }));
+  const p = cache.prepare({ key: "a", label: "a", color: "#000", points }, OPTS);
+  const rows = buildRenderRows([p], ALL, 0, n - 1, 100, false);
+  assert.ok(rows.length > 0);
+  const defined = rows.filter((r) => r !== undefined);
+  assert.equal(rows.length, defined.length, "an undefined row would reach Recharts with no x at all");
+  for (const r of rows) assert.ok(Number.isFinite(r.x), `row x ${r.x} is not finite`);
+});
+
 test("a widening point outside the domain keeps its exact x, not a clamped one", () => {
   const cache = new PreparedSeriesCache();
   // A far-off leading point, then a dense run starting inside the domain: the

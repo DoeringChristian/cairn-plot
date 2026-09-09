@@ -191,3 +191,36 @@ test("a registered type without a content id keeps the canonical JSON key", () =
   assert.match(resolutionKey(source, node), /^src\d+\|plot:contentless:/);
   assert.equal(resolutionKey(source, node), resolutionKey(source, recreated));
 });
+
+test("two nodes of a registered type without a content id key APART, not onto one entry", () => {
+  // The image plot types are all of this shape (no `contentId()`), so the
+  // registry answers `{ contentId: null }` for every one of their nodes. Keying
+  // on that literal would give every image in a document the SAME cache entry,
+  // and each would serve the other's decode.
+  registerReactPlotType({
+    definition: {
+      kind: "imagelike",
+      validateData: (value) => value,
+      defaults: () => ({}),
+      projectSettings: () => ({}),
+      resolve: async () => null,
+      present: (content) => content,
+    },
+    backends: [],
+  });
+  const source = {};
+  const first = { kind: "plot" as const, type: "imagelike", data: { kind: "image", hash: "abc" } };
+  const second = { kind: "plot" as const, type: "imagelike", data: { kind: "image", hash: "def" } };
+  const alsoFirst = { kind: "plot" as const, type: "imagelike", data: { hash: "abc", kind: "image" } };
+  assert.notEqual(
+    resolutionKey(source, first),
+    resolutionKey(source, second),
+    "distinct data must not collapse onto one key",
+  );
+  assert.equal(
+    resolutionKey(source, first),
+    resolutionKey(source, alsoFirst),
+    "structurally equal data still shares one key",
+  );
+  assert.equal(resolutionKey(source, first).endsWith("plot:imagelike:null"), false);
+});
