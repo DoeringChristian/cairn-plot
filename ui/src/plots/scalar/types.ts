@@ -10,6 +10,10 @@ export interface ScalarPresentation {
   readonly yScale?: AxisScale;
   readonly xRange?: readonly [number | null, number | null];
   readonly yRange?: readonly [number | null, number | null];
+  /** EMA weight on the previous point (0 = off). Present ⇒ `series` are RAW. */
+  readonly smoothing?: number;
+  /** Percentile band of y kept when drawing; defaults to `[0, 100]` (all). */
+  readonly outlierPct?: readonly [number, number];
   readonly lineType?: "linear" | "monotone" | "step" | "stepBefore" | "stepAfter";
   readonly showLegend?: boolean;
   readonly tooltip?: { readonly showContext?: boolean; readonly showWallTime?: boolean };

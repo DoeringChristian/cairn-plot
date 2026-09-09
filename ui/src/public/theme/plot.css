@@ -137,3 +137,15 @@ button i[class*="fa-"] { font-size: 12px; line-height: 1; }
 .cairn-plot-split-divider {
   touch-action: none;
 }
+
+/* Scalar line hover emphasis. `data-emph` is written straight onto the curve
+   <path> by ScalarPlot (Recharts forwards data-* there) so pointing at a line
+   never re-renders the chart; these rules beat Recharts' stroke presentation
+   attributes, which is exactly why the emphasis can live in CSS. */
+.recharts-line path[data-emph="on"] {
+  stroke-width: 2.5;
+  stroke-opacity: 1;
+}
+.recharts-line path[data-emph="dim"] {
+  stroke-opacity: 0.15;
+}

@@ -29,6 +29,7 @@ export function ScalarPlotView({ presentation: p, settings, commands }: ReactPlo
     yScale,
     xRange,
     yRange,
+    outlierPct,
     ...rest
   } = p;
   return <ChartBox height={height}>
@@ -39,6 +40,7 @@ export function ScalarPlotView({ presentation: p, settings, commands }: ReactPlo
       yScale={yScale ?? "linear"}
       xRange={xRange ? [...xRange] : [null, null]}
       yRange={yRange ? [...yRange] : [null, null]}
+      outlierPct={outlierPct ? [outlierPct[0], outlierPct[1]] : undefined}
       {...rest}
       view={view}
       onViewChange={setView}

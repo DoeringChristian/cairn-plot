@@ -1,4 +1,6 @@
 import {
+  useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -18,7 +20,8 @@ import {
 import type { AxisScale, Series, ChartViewState } from "../../../types";
 import type { AxisSource } from "../../../transforms/x-axis";
 import { resolveAxisDomain } from "../../../transforms/domain";
-import { mergeToRows } from "../../../transforms/merge-rows";
+import { PreparedSeriesCache, type PreparedSeries } from "../../prepared-series";
+import { buildRenderRows } from "../../render-rows";
 import { formatXTick } from "../../../../primitives/format";
 import { AXIS, GRID, paddedDomain } from "../../../../public/theme";
 import { useModifierKey } from "../../../../host/hooks/use-modifier-key";
@@ -40,6 +43,15 @@ export interface ScalarPlotProps {
   yRange: [number | null, number | null];
   view: ChartViewState;
   onViewChange: (v: ChartViewState) => void;
+  /**
+   * EMA weight on the previous point (0 = off). Pass RAW series: the plot
+   * smooths them itself and draws the unsmoothed values as the faint overlay.
+   * Omit it entirely to keep the legacy contract — pre-smoothed `points` with
+   * the raw values in `rawPoints`.
+   */
+  smoothing?: number;
+  /** Percentile band of y kept when drawing; defaults to `[0, 100]` (all). */
+  outlierPct?: [number, number];
   lineType?: "linear" | "monotone" | "step" | "stepBefore" | "stepAfter";
   showLegend?: boolean;
   tooltip?: { showContext?: boolean; showWallTime?: boolean };
@@ -57,6 +69,8 @@ export default function ScalarPlot({
   yRange,
   view,
   onViewChange,
+  smoothing,
+  outlierPct,
   lineType = "linear",
   showLegend = true,
   tooltip,
@@ -64,12 +78,53 @@ export default function ScalarPlot({
   onSeriesClick,
   className,
 }: ScalarPlotProps) {
-  const data = useMemo(() => mergeToRows(series), [series]);
-
   // S6 interactive legend: per-series show/hide. Hidden series are dropped from
   // the render AND from y-autoscale so the axis reframes to what's visible.
   const seriesKeys = useMemo(() => series.map((s) => s.key), [series]);
   const visibility = useSeriesVisibility(seriesKeys);
+
+  // ── Prepared series ──
+  // One typed-array copy per series, extended in place on append. Identity is
+  // the memo key downstream: preparing unchanged points returns the very same
+  // object, so the row build below is skipped on a re-render that changed
+  // nothing. The tuple prop is spread into scalar deps so a fresh
+  // `[0, 100]` literal from the host does not bust the memo every render.
+  const cacheRef = useRef(new PreparedSeriesCache());
+  const preparedKeysRef = useRef<Set<string>>(new Set());
+  const logX = xScale === "log";
+  const outLo = outlierPct?.[0] ?? 0;
+  const outHi = outlierPct?.[1] ?? 100;
+  const prepared = useMemo(() => {
+    const cache = cacheRef.current;
+    const opts = {
+      smoothing: smoothing ?? 0,
+      outlierPct: [outLo, outHi] as [number, number],
+      logX,
+    };
+    const main: PreparedSeries[] = [];
+    const all: PreparedSeries[] = [];
+    // Series whose faint overlay comes from the LEGACY pre-smoothed contract.
+    const legacyRaw = new Set<string>();
+    for (const s of series) {
+      const p = cache.prepare(s, opts);
+      main.push(p);
+      all.push(p);
+      if (smoothing === undefined && s.rawPoints) {
+        // Legacy input: `points` is already smoothed (prepared with smoothing
+        // 0, so no `rawYs`) and the overlay rides on the host's `rawPoints`,
+        // prepared and pixel-reduced as a series of its own under exactly the
+        // `__raw` key `mergeToRows` would have given it.
+        legacyRaw.add(s.key);
+        all.push(cache.prepare({ ...s, key: `${s.key}__raw`, points: s.rawPoints }, opts));
+      }
+    }
+    // The cache outlives every render, so a series that leaves the data would
+    // otherwise pin its typed arrays forever (run selection changes are common).
+    const live = new Set(all.map((p) => p.key));
+    for (const key of preparedKeysRef.current) if (!live.has(key)) cache.drop(key);
+    preparedKeysRef.current = live;
+    return { main, all, legacyRaw };
+  }, [series, smoothing, outLo, outHi, logX]);
 
   const xDomain = resolveAxisDomain(
     xRange[0], xRange[1], view.xMin, view.xMax, xScale,
@@ -81,31 +136,32 @@ export default function ScalarPlot({
   const dataXs = useMemo(() => {
     let lo = Infinity;
     let hi = -Infinity;
-    for (const s of series) {
-      for (const p of s.points) {
-        if (p.x < lo) lo = p.x;
-        if (p.x > hi) hi = p.x;
-      }
+    for (const p of prepared.main) {
+      if (p.n === 0) continue;
+      if (p.xMin < lo) lo = p.xMin;
+      if (p.xMax > hi) hi = p.xMax;
     }
     if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [0, 1] as const;
     if (lo === hi) return [lo - 0.5, hi + 0.5] as const;
     return [lo, hi] as const;
-  }, [series]);
+  }, [prepared]);
 
   const dataYs = useMemo(() => {
     let lo = Infinity;
     let hi = -Infinity;
-    for (const s of series) {
-      if (visibility.isHidden(s.key)) continue;
-      for (const p of s.points) {
-        if (p.y < lo) lo = p.y;
-        if (p.y > hi) hi = p.y;
-      }
+    for (const p of prepared.main) {
+      if (p.n === 0 || visibility.isHidden(p.key)) continue;
+      // Autoscale to what is DRAWN: clipped-away outliers must not widen the
+      // axis (`lo`/`hi` are ±Infinity when `outlierPct` clips nothing).
+      const yLo = Math.max(p.yMin, p.lo);
+      const yHi = Math.min(p.yMax, p.hi);
+      if (yLo < lo) lo = yLo;
+      if (yHi > hi) hi = yHi;
     }
     if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [0, 1] as const;
     if (lo === hi) return [lo - 0.5, hi + 0.5] as const;
     return [lo, hi] as const;
-  }, [series, visibility]);
+  }, [prepared, visibility]);
 
   const effectiveX: [number, number] = [
     typeof xDomain[0] === "number" ? xDomain[0] : dataXs[0],
@@ -142,11 +198,61 @@ export default function ScalarPlot({
   const effectiveRef = useRef({ x: effectiveX, y: effectiveY });
   effectiveRef.current = { x: effectiveX, y: effectiveY };
 
-  const hoveredSeriesRef = useRef<string | null>(null);
-  const [hoveredSeries, setHoveredSeries] = useState<string | null>(null);
-  hoveredSeriesRef.current = hoveredSeries;
-
   const altDown = useModifierKey();
+  const altDownRef = useRef(altDown);
+  altDownRef.current = altDown;
+
+  // ── Hover emphasis, applied to the DOM ──
+  // Hover must not re-render: a re-render rebuilds every path string. Recharts
+  // forwards `data-*` props to the curve `<path>` (`className` would land on
+  // the wrapping `<g class="recharts-line">`), so the hovered key is written
+  // onto those paths as `data-emph` and two rules in `public/theme/plot.css`
+  // do the rest. React never sees the hovered key; only `hoveredSeriesRef`,
+  // read by the click handler, does.
+  const hoveredSeriesRef = useRef<string | null>(null);
+  const applyEmphasis = useCallback((key: string | null) => {
+    hoveredSeriesRef.current = key;
+    const root = chartBoxRef.current;
+    if (!root) return;
+    root.querySelectorAll<SVGPathElement>("path[data-series-key]").forEach((el) => {
+      // The faint raw overlay dims with its series but never takes the "on"
+      // emphasis — being thickened to full opacity is the opposite of faint.
+      const isRaw = el.dataset.seriesRole === "raw";
+      el.dataset.emph = el.dataset.seriesKey === key
+        ? (isRaw ? "" : "on")
+        : key ? "dim" : "";
+    });
+    // The cursor is React-rendered from `altDown`; only the hover half of it
+    // is imperative, so an Alt-pan cursor is never stolen by a hover.
+    if (!altDownRef.current) root.style.cursor = key ? "pointer" : "crosshair";
+  }, []);
+
+  // ── Render data ──
+  // How many screen columns the reduction may spend. The primary source is
+  // ResponsiveContainer's onResize, which fires BEFORE the chart renders; the
+  // <Customized> plot rect (the real drawing area, ~54 px narrower once the
+  // y-axis and margins are taken out) corrects it one render later. Both are
+  // ignored below an 8 px difference so a resize drag does not rebuild the
+  // rows on every pixel. 800 until either has spoken.
+  const [plotWidth, setPlotWidth] = useState(800);
+  const onContainerResize = useCallback((width: number) => {
+    setPlotWidth((prev) => (Math.abs(prev - width) >= 8 ? width : prev));
+  }, []);
+  useEffect(() => {
+    const o = plotOffsetRef.current;
+    if (o && o.width > 0 && Math.abs(o.width - plotWidth) >= 8) setPlotWidth(o.width);
+  });
+  const columns = Math.max(64, Math.round(plotWidth));
+
+  const [x0, x1] = effectiveX;
+  const data = useMemo(() => {
+    const hidden = visibility.hidden;
+    const { all, legacyRaw } = prepared;
+    const isVisible = (key: string) => !hidden.has(
+      key.endsWith("__raw") && legacyRaw.has(key.slice(0, -5)) ? key.slice(0, -5) : key,
+    );
+    return buildRenderRows(all, isVisible, x0, x1, columns, logX);
+  }, [prepared, visibility, x0, x1, columns, logX]);
 
   // ── Toolbar controller ──
   // Bridge the ChartViewState substrate onto the renderer-agnostic PlotController the
@@ -189,7 +295,7 @@ export default function ScalarPlot({
       className={`group relative overflow-hidden ${className ?? ""}`}
       style={{
         touchAction: "none",
-        cursor: altDown ? "move" : hoveredSeries ? "pointer" : "crosshair",
+        cursor: altDown ? "move" : "crosshair",
         userSelect: "none",
         WebkitUserSelect: "none",
       } as CSSProperties}
@@ -206,7 +312,7 @@ export default function ScalarPlot({
       }}
       onLostPointerCapture={clearDrag}
     >
-      <ResponsiveContainer width="100%" height="100%">
+      <ResponsiveContainer width="100%" height="100%" onResize={onContainerResize}>
         <LineChart
           data={data}
           margin={CHART_MARGIN}
@@ -238,13 +344,13 @@ export default function ScalarPlot({
                     closestKey = p.dataKey;
                   }
                 }
-                setHoveredSeries(closestKey);
+                applyEmphasis(closestKey);
               } else if (payload.length === 1) {
-                setHoveredSeries(payload[0]!.dataKey);
+                applyEmphasis(payload[0]!.dataKey);
               }
             }
           }}
-          onMouseLeave={() => setHoveredSeries(null)}
+          onMouseLeave={() => applyEmphasis(null)}
         >
           {/* Recharts axes/grid are token-styled (NOT migrated off Recharts —
               that would risk the zoom/pan gesture code) so they visually match
@@ -301,37 +407,40 @@ export default function ScalarPlot({
                 <CustomLegend
                   series={series}
                   onSelect={(key) => onSeriesClick?.(key)}
+                  onHover={applyEmphasis}
                   selectedKeys={selectedSeriesKeys}
                   visibility={visibility}
                 />
               }
             />
           )}
-          {series.map((s) => {
+          {series.map((s, i) => {
             // S6: a hidden series renders no lines at all (Plotly legend hide).
             if (visibility.isHidden(s.key)) return null;
-            const isHovered = hoveredSeries === s.key;
-            const isSelected = selectedSeriesKeys?.has(s.key);
-            const isDimmed =
-              (hoveredSeries != null && !isHovered) ||
-              ((selectedSeriesKeys?.size ?? 0) > 0 &&
-                !isSelected &&
-                !isHovered);
+            // Run-selection dimming stays React state (it is a prop, and it
+            // never changes on mouse move). Hover dimming rides `data-emph`,
+            // and the "on" rule's `stroke-opacity: 1` deliberately beats this
+            // attribute so hovering a non-selected series still highlights it.
+            const isSelDimmed =
+              (selectedSeriesKeys?.size ?? 0) > 0 && !selectedSeriesKeys!.has(s.key);
+            const hasRaw = prepared.main[i]?.rawYs != null || prepared.legacyRaw.has(s.key);
             return [
-              s.rawPoints && (
+              hasRaw && (
                 <Line
                   key={`${s.key}__raw`}
                   type={lineType}
                   dataKey={`${s.key}__raw`}
                   stroke={s.color}
                   strokeWidth={1}
-                  strokeOpacity={isDimmed ? 0.05 : 0.2}
+                  strokeOpacity={isSelDimmed ? 0.05 : 0.2}
                   dot={false}
                   isAnimationActive={false}
                   connectNulls
                   yAxisId="__left__"
                   legendType="none"
                   tooltipType="none"
+                  data-series-key={s.key}
+                  data-series-role="raw"
                 />
               ),
               <Line
@@ -340,12 +449,13 @@ export default function ScalarPlot({
                 name={s.label}
                 dataKey={s.key}
                 stroke={s.color}
-                strokeWidth={isHovered ? 2.5 : 1.5}
-                strokeOpacity={isDimmed ? 0.15 : 1}
+                strokeWidth={1.5}
+                strokeOpacity={isSelDimmed ? 0.15 : 1}
                 dot={false}
                 isAnimationActive={false}
                 connectNulls
                 yAxisId="__left__"
+                data-series-key={s.key}
               />,
             ];
           })}
