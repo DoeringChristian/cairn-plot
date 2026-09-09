@@ -1,6 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DecodePool, DecodePoolError, isRetryableInline, type PoolWorker } from "./decode-pool-core.ts";
+import {
+  canReplayInline,
+  DecodePool,
+  DecodePoolError,
+  INLINE_REPLAY_MAX_BYTES,
+  isRetryableInline,
+  type PoolWorker,
+} from "./decode-pool-core.ts";
 
 /** `assert.rejects` predicate: a `DecodePoolError` with this `code` whose message matches `pattern`. */
 function poolErr(code: DecodePoolError["code"], pattern: RegExp) {
@@ -128,18 +135,27 @@ test("abort with a non-Error reason is wrapped in a DecodePoolError coded \"abor
   await assert.rejects(b, poolErr("aborted", /gone-string/));
 });
 
-test("abort after dispatch rejects now, drops the late result, keeps the worker", async () => {
-  const { pool, workers } = makePool(1);
+test("abort after dispatch frees the worker at once, drops the late result, and cancels its timer", async () => {
+  const { pool, workers } = makePool(1); // 30 s default; only `a` carries a short timeout
   const ctl = new AbortController();
-  const a = pool.run(job("a", { signal: ctl.signal }));
+  const a = pool.run(job("a", { signal: ctl.signal, timeoutMs: 10 }));
   const b = pool.run(job("b"));
+  assert.equal(pool.stats().queued, 1);
   ctl.abort(new Error("gone"));
   await assert.rejects(a, (err) => err instanceof DecodePoolError && err.code === "aborted" && /gone/.test(err.message));
+  assert.equal(workers[0]!.terminated, false); // wasm cannot be interrupted: the worker is kept
+  // The aborted job no longer holds the slot: the queued job goes out NOW, not
+  // once some later event happens to free the worker.
+  assert.deepEqual(workers[0]!.posts.map((p) => p.kind), ["a", "b"]);
+  assert.equal(pool.stats().queued, 0);
+  // ...and the aborted job's timer was cancelled with it: were it still armed,
+  // it would fire here and terminate the worker, taking `b` down too.
+  await new Promise((r) => setTimeout(r, 40));
   assert.equal(workers[0]!.terminated, false);
-  pool.onMessage(0, { id: workers[0]!.posts[0]!.id, ok: true }); // late result
+  pool.onMessage(0, { id: workers[0]!.posts[0]!.id, ok: true }); // late result for `a`: ignored by id
   await tick();
-  assert.deepEqual(workers[0]!.posts.map((p) => p.kind), ["a", "b"]); // b dispatched after a completed
   pool.onMessage(0, { id: workers[0]!.posts[1]!.id, ok: true }); await b;
+  assert.deepEqual(pool.stats().completed, [1]); // only `b` counted
 });
 
 test("timeout terminates only the slow worker; the other worker and the queue survive", async () => {
@@ -190,6 +206,26 @@ test("dispose terminates every worker and rejects queued and dispatched jobs", a
   assert.equal(workers[0]!.terminated, true);
 });
 
+test("dispose settles a dispatched job whose slot no longer holds a worker", async () => {
+  const { pool } = makePool(1);
+  const a = pool.run(job("a"));
+  // The shape the guard is about: a slot with NO worker that still owns a
+  // dispatched job. `terminate()` used to bail on the empty slot before
+  // rejecting, so `a` never settled and its caller waited for ever.
+  (pool as unknown as { slots: (PoolWorker | null)[] }).slots[0] = null;
+  pool.dispose();
+  // Raced against a timer rather than awaited: a never-settling promise must
+  // fail this test, not hang node's (untimed) runner.
+  const settled = await Promise.race([
+    a.then(() => "resolved" as unknown, (e: unknown) => e),
+    new Promise((r) => setTimeout(() => r("still pending"), 50)),
+  ]);
+  assert.ok(
+    settled instanceof DecodePoolError && settled.code === "disposed",
+    `a dispatched job must settle even on an empty slot, got: ${String(settled)}`,
+  );
+});
+
 test("dispatch-stage abort listener is removed on settle, not just on abort", async () => {
   const { pool, workers } = makePool(1);
   const ctl = new AbortController();
@@ -223,4 +259,21 @@ test("isRetryableInline: only worker-error and reply are safe to replay inline",
   // even reached) is retryable — there is no pool decision to defer to.
   assert.equal(isRetryableInline(new Error("shell exploded")), true);
   assert.equal(isRetryableInline("not even an Error"), true);
+});
+
+test("canReplayInline: a worker crash on a large input is not replayed on the main thread", () => {
+  const big = INLINE_REPLAY_MAX_BYTES + 1;
+  const small = 1024;
+  // A crash the pool cannot attribute: below the size gate it is treated as the
+  // spawn/module-load failure it usually is; above it, as the decode dying.
+  assert.equal(canReplayInline(new DecodePoolError("x", "worker-error"), small), true);
+  assert.equal(canReplayInline(new DecodePoolError("x", "worker-error"), big), false);
+  // A decode-level `ok:false` reply says the worker ran fine — size is irrelevant.
+  assert.equal(canReplayInline(new DecodePoolError("x", "reply"), big), true);
+  // Terminal codes stay terminal at every size.
+  for (const code of ["timeout", "aborted", "disposed", "affinity"] as const) {
+    assert.equal(canReplayInline(new DecodePoolError("x", code), small), false);
+  }
+  // A failure from before the pool was reached carries no pool verdict.
+  assert.equal(canReplayInline(new Error("shell exploded"), big), true);
 });

@@ -12,9 +12,11 @@
  *      (also the `node:test` path). A pool TIMEOUT or ABORT is never replayed
  *      here: the decode may already be running in the worker, and doing the
  *      same slow work again on the main thread would freeze the tab — that
- *      error surfaces to the caller as-is (see `isRetryableInline`);
+ *      error surfaces to the caller as-is, and so does a worker CRASH on a
+ *      large input (see `canReplayInline`);
  *   3. if that throws, the original pure-TS reader (`exr.ts`, NONE/ZIP/ZIPS) as
- *      a last-ditch net.
+ *      a last-ditch net — gated by the SAME rule: a terminal pool error never
+ *      reaches it either, since it too decodes on the main thread.
  *
  * ## Deep live-flatten (the depth slider)
  * `decodeExr(src, { deepLiveFlatten: true })` (the single-image LEAF path) opens
@@ -43,7 +45,7 @@ import { decodeExrPreferWasm } from "./exr-wasm.ts";
 import { hasExrSelection, type ExrSelection } from "./exr-full.ts";
 import { loadExrDecoder } from "./wasm-inline/wasm-exr-inline.ts";
 import { decodePoolAvailable, getDecodePool } from "./decode-pool.ts";
-import { isRetryableInline } from "./decode-pool-core.ts";
+import { canReplayInline } from "./decode-pool-core.ts";
 import type {
   ExrGpuCsrPayload,
   ExrImagePayload,
@@ -233,8 +235,9 @@ async function decodeFull(src: ImageSource, select?: ExrSelection): Promise<Deco
       // Worker path unavailable/broken → run the SAME WASM-first core on the
       // main thread (also yields the real, informative error for a bad file).
       // A pool TIMEOUT or ABORT is NOT retried here: the worker may still be
-      // running the decode, and replaying it inline can freeze the tab.
-      if (!isRetryableInline(err)) throw err;
+      // running the decode, and replaying it inline can freeze the tab. Nor is
+      // a crash on a LARGE input, where the decode itself is the likely cause.
+      if (!canReplayInline(err, bytes.byteLength)) throw err;
       return decodeExrPreferWasm(bytes.slice(0), undefined, select);
     }
   }
@@ -274,6 +277,11 @@ export async function decodeExr(
   try {
     return await decodeFull(src, select);
   } catch (fullErr) {
+    // A TERMINAL pool failure (timeout/abort/disposed/affinity, or a crash on a
+    // large input) stops the chain here. `decodeExrPure` is a main-thread decode
+    // like any other: replaying a decode the worker already spent 30 s on would
+    // freeze the tab exactly as the inline WASM path would.
+    if (!canReplayInline(fullErr, src.bytes.byteLength)) throw fullErr;
     // The pure reader has no selection support — with a selection, the full
     // decoder's error (e.g. "no channel named X") is the real answer.
     if (hasExrSelection(select)) {

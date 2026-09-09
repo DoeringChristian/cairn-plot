@@ -13,14 +13,15 @@
  *      `node:test` path, and the path that surfaces the real, informative error
  *      for a bad file). A pool TIMEOUT or ABORT is never replayed inline — the
  *      worker may still be parsing, and re-running the same parse on the main
- *      thread can freeze the tab — that error surfaces to the caller as-is
- *      (see `isRetryableInline`).
+ *      thread can freeze the tab — that error surfaces to the caller as-is, and
+ *      so does a worker CRASH on an input past `INLINE_REPLAY_MAX_BYTES` (the
+ *      parse itself is then the likely cause). See `canReplayInline`.
  */
 import type { DecodedImage } from "../decoders.ts";
 import { parseNpy } from "../../../transforms/parse-npy.ts";
 import { npyArrayToDecoded } from "./npy-image.ts";
 import { decodePoolAvailable, getDecodePool } from "./decode-pool.ts";
-import { isRetryableInline } from "./decode-pool-core.ts";
+import { canReplayInline } from "./decode-pool-core.ts";
 import type { ExrWorkerResponse, NpyImagePayload } from "./decode-worker.ts";
 
 /** A worker `.npy` reply → the canonical {@link DecodedImage} (buffers reinterpreted). */
@@ -53,8 +54,10 @@ export async function decodeNpyBytes(bytes: ArrayBuffer): Promise<DecodedImage> 
     // Pool unavailable/broken (never ran the job) or a decode-level failure →
     // the same parse inline (also yields the real, informative error for a
     // genuinely bad file). A TIMEOUT or ABORT is NOT retried here: the worker
-    // may still be parsing, and replaying it inline can freeze the tab.
-    if (!isRetryableInline(err)) throw err;
+    // may still be parsing, and replaying it inline can freeze the tab. Nor is
+    // a crash on a LARGE input: the parse itself is then the likely cause, so
+    // the error surfaces instead of being re-run on the main thread.
+    if (!canReplayInline(err, bytes.byteLength)) throw err;
     return npyArrayToDecoded(parseNpy(bytes));
   }
   // OUTSIDE the catch: a malformed reply is a protocol bug, and must surface as

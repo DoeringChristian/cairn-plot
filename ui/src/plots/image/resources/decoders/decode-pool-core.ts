@@ -11,8 +11,9 @@
  *     a terminated slot is reused by the next spawn, so an affinity job must
  *     also carry the `affinityEpoch` its `run` returned — the slot's generation
  *     counter — or a stale handle would be replayed into a fresh wasm heap;
- *   - abort before dispatch dequeues; abort after dispatch rejects now and drops
- *     the late reply — wasm cannot be interrupted, the worker is kept;
+ *   - abort before dispatch dequeues; abort after dispatch settles the job now
+ *     (freeing the slot, cancelling its timer) and drops the late reply — wasm
+ *     cannot be interrupted, so the worker itself is kept;
  *   - a timeout or error terminates ONLY that worker (its dispatched jobs
  *     reject); the slot respawns on next use; other workers and the shared queue
  *     are untouched.
@@ -84,6 +85,29 @@ export class DecodePoolError extends Error {
  */
 export function isRetryableInline(err: unknown): boolean {
   if (err instanceof DecodePoolError) return err.code === "worker-error" || err.code === "reply";
+  return true;
+}
+
+/**
+ * How large an input may be and still be replayed inline after a `"worker-error"`.
+ * A worker that died MID-decode reports the same code as one that never started
+ * (spawn / module-load failure): the pool cannot tell them apart, and a crash on
+ * a big input is most likely the decode itself (OOM, a wasm trap). Re-running
+ * that on the main thread freezes the tab, so past this size the error surfaces.
+ */
+export const INLINE_REPLAY_MAX_BYTES = 8 * 1024 * 1024;
+
+/**
+ * `isRetryableInline` narrowed by INPUT SIZE: the decode of `byteLength` bytes
+ * may be replayed on the main thread. Small inputs still take the inline path
+ * after a `"worker-error"` (the spawn/module-load failure case, and the path
+ * that yields the real error for a bad file); large ones do not.
+ */
+export function canReplayInline(err: unknown, byteLength: number): boolean {
+  if (!isRetryableInline(err)) return false;
+  if (err instanceof DecodePoolError && err.code === "worker-error" && byteLength > INLINE_REPLAY_MAX_BYTES) {
+    return false;
+  }
   return true;
 }
 
@@ -230,7 +254,22 @@ export class DecodePool {
     };
     if (q.job.signal) {
       d.signal = q.job.signal;
-      d.onAbort = () => { if (this.dispatched.has(id)) { d.dropped = true; d.reject(abortError(q.job.signal!)); } };
+      d.onAbort = () => {
+        if (!this.dispatched.has(id)) return;
+        // Abort AFTER dispatch: wasm cannot be interrupted, so the worker is
+        // kept and its late reply is simply ignored (the id is gone from
+        // `dispatched`). The job must be FULLY settled here — forgotten, timer
+        // cleared, listener detached, the slot freed and the queue pumped — or
+        // the worker would stay busy until the stale timer killed it, taking
+        // every other job dispatched to it down with it.
+        this.dispatched.delete(id);
+        clearTimeout(d.timer);
+        detachAbort(d);
+        d.dropped = true;
+        d.reject(abortError(q.job.signal!));
+        this.markIdle(worker);
+        this.pump();
+      };
       q.job.signal.addEventListener("abort", d.onAbort, { once: true });
     }
     this.dispatched.set(id, d);
@@ -246,11 +285,10 @@ export class DecodePool {
   }
 
   private terminate(worker: number, err: Error): void {
-    const w = this.slots[worker];
-    if (!w) return;
-    this.slots[worker] = null;
-    this.busy[worker] = false;
-    w.terminate();
+    // Settle this worker's jobs FIRST, before the empty-slot early return: a
+    // slot can hold NO worker and still own dispatched jobs, and bailing out on
+    // the null slot would leave those `run()` promises pending for ever (e.g.
+    // `dispose()` reaching a slot that was nulled earlier).
     for (const [id, d] of this.dispatched) {
       if (d.worker !== worker) continue;
       this.dispatched.delete(id);
@@ -258,6 +296,11 @@ export class DecodePool {
       detachAbort(d);
       if (!d.dropped) d.reject(err);
     }
+    const w = this.slots[worker];
+    if (!w) return;
+    this.slots[worker] = null;
+    this.busy[worker] = false;
+    w.terminate();
   }
 
   private pump(): void {
