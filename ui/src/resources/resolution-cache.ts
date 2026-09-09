@@ -42,7 +42,10 @@ export function sourceKey(obj: object): string {
   return id;
 }
 
-function canonicalJson(value: unknown): string {
+/** Order-independent JSON text — the shared fallback identity for authored
+ *  content. Exported so a plot definition's own `contentId` can canonicalise the
+ *  small remainder of its data without re-implementing the rules. */
+export function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (value !== null && typeof value === "object") {
     const record = value as Record<string, unknown>;
@@ -53,21 +56,48 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+/** Looks a plot type's own content identity up in the registry. Injected via
+ *  {@link setContentIdResolver} because the plot layer sits ABOVE this one and
+ *  must not be imported from here (`check:plot-boundary`). Returns `undefined`
+ *  when `type` is not registered (yet), which is distinct from a registered kind
+ *  that declines to summarise this data (`{ contentId: null }`). */
+export type ContentIdResolver = (
+  type: string,
+  data: unknown,
+) => { readonly contentId: string | null } | undefined;
+
+let contentIdResolver: ContentIdResolver | undefined;
+
+/** Install the plot-registry lookup used by {@link resolutionKey}. */
+export function setContentIdResolver(resolver: ContentIdResolver | undefined): void {
+  contentIdResolver = resolver;
+}
+
 /** Content identity for durable plot descriptors. Presentation-only props and
  * settings are deliberately excluded: changing exposure/labels must not decode
  * again. Structurally equivalent descriptor objects therefore share the same
  * prepared payload — essential for host-authored iteration sliders that recreate
- * a leaf object when revisiting an already-seen artifact. */
+ * a leaf object when revisiting an already-seen artifact.
+ *
+ * A plot definition may summarise its own data far more cheaply than canonical
+ * JSON can (scalar's inline samples are the motivating case), so the registry is
+ * consulted FIRST. A key derived while the type was still unregistered is NOT
+ * memoised: lazily-registered kinds must be free to adopt their own id on the
+ * registration re-render, after which the memo makes the key stable. */
 function descriptorContentId(node: object): string | null {
   if (contentIdMap.has(node)) return contentIdMap.get(node) ?? null;
   const record = node as Record<string, unknown>;
   let key: string | null = null;
+  // A key derived from an unregistered plot type is provisional — see above.
+  let memoisable = true;
   if (record.kind === "plot" && typeof record.type === "string" && record.data != null) {
-    key = `plot:${record.type}:${canonicalJson(record.data)}`;
+    const resolved = contentIdResolver?.(record.type, record.data);
+    memoisable = resolved !== undefined;
+    key = resolved?.contentId ?? `plot:${record.type}:${canonicalJson(record.data)}`;
   } else if (record.kind === "compare" && typeof record.type === "string" && Array.isArray(record.operands)) {
     key = `compare:${record.type}:${String(record.presentation ?? "")}:${String(record.strategy ?? "")}:${String(record.referenceIndex ?? "")}:${canonicalJson(record.operands)}`;
   }
-  contentIdMap.set(node, key);
+  if (memoisable) contentIdMap.set(node, key);
   return key;
 }
 

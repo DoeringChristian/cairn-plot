@@ -90,6 +90,14 @@ export interface PlotDefinition<
   resolve(spec: TSpec, context: ResolveContext): Promise<TContent>;
   present(content: TContent): TPresentation;
 
+  /** Content identity for a descriptor's data, WITHOUT serialising it. The
+   *  resolution cache keys authored content by this id when the kind supplies
+   *  one, so a plot whose data carries the samples inline (scalar and friends)
+   *  can summarise them in O(series) instead of stringifying every point.
+   *  Return `null` for data this kind cannot summarise; the cache then falls
+   *  back to canonical JSON. Must be a pure function of `data`. */
+  contentId?(data: DataSpec): string | null;
+
   readonly comparison?: ComparisonCapability<TComparisonPlan, TPresentation>;
 }
 
@@ -104,6 +112,9 @@ export interface RegisteredPlotDefinition {
   migrateSettings?(settings: SettingsRecord): SettingsRecord;
   resolve(node: PlotLeafNode, context: ResolveContext): Promise<unknown>;
   present(content: unknown): unknown;
+  /** See {@link PlotDefinition.contentId}; absent when the kind has no cheaper
+   *  identity than the canonical JSON of its data. */
+  contentId?(data: DataSpec): string | null;
   readonly comparison?: ComparisonCapability<unknown, unknown>;
 }
 
@@ -124,6 +135,9 @@ export function definePlot<
     projectSettings: (settings) => definition.settings.project(settings),
     ...(definition.settings.migrateSettings
       ? { migrateSettings: (settings) => definition.settings.migrateSettings!(settings) }
+      : {}),
+    ...(definition.contentId
+      ? { contentId: (data: DataSpec) => definition.contentId!(data) }
       : {}),
     resolve: (node, context) => definition.resolve(definition.data.validate(node.data), context),
     present: (content) => definition.present(content as TContent),

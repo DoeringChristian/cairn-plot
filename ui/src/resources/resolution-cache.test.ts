@@ -11,6 +11,9 @@ import {
   estimateResolvedBytes,
   __resetResolveCacheForTest,
 } from "./resolution-cache.ts";
+import { clearPlotTypesForTest } from "../plots/registry.ts";
+import { clearReactPlotTypesForTest, registerReactPlotType } from "../plots/react-registry.ts";
+import { ensureScalarPlotType } from "../plots/scalar/register.ts";
 
 test("resolution keys include DataSource identity", () => {
   const node = {};
@@ -115,4 +118,76 @@ test("resolved byte estimates count buffers once and tolerate cycles", () => {
   value.self = value;
   assert.ok(estimateResolvedBytes(value) >= pixels.byteLength);
   assert.ok(estimateResolvedBytes(value) < pixels.byteLength * 2 + 64);
+});
+
+test("an unregistered plot type keys by canonical JSON and adopts its content id on registration", () => {
+  clearReactPlotTypesForTest();
+  clearPlotTypesForTest();
+  const source = {};
+  const node = {
+    kind: "plot" as const,
+    type: "scalar",
+    data: {
+      kind: "inline" as const,
+      props: {
+        series: [{ key: "loss", label: "Loss", color: "#000", points: [{ x: 0, y: 1 }, { x: 4, y: 9 }] }],
+      },
+    },
+  };
+  const beforeRegistration = resolutionKey(source, node);
+  assert.match(beforeRegistration, /"points"/, "an unregistered type falls back to canonical JSON");
+  ensureScalarPlotType(() => null);
+  const afterRegistration = resolutionKey(source, node);
+  assert.notEqual(afterRegistration, beforeRegistration);
+  assert.match(afterRegistration, /scalar:loss\|2\|0\|4\|9\|/);
+  assert.equal(resolutionKey(source, node), afterRegistration, "the content-id key is stable afterwards");
+});
+
+test("registered scalar nodes share one key across equivalent recreated descriptors", () => {
+  ensureScalarPlotType(() => null);
+  const source = {};
+  const authored = {
+    kind: "plot" as const,
+    type: "scalar",
+    data: {
+      kind: "inline" as const,
+      props: {
+        series: [{
+          key: "loss",
+          label: "Loss",
+          color: "#000",
+          points: [{ x: 0, y: 1, wallTime: "t0" }, { x: 4, y: 9, wallTime: "t1" }],
+        }],
+      },
+    },
+  };
+  const recreated = structuredClone(authored);
+  recreated.data.props.series[0]!.points[0]!.wallTime = "later";
+  const appended = structuredClone(authored);
+  appended.data.props.series[0]!.points.push({ x: 5, y: 11, wallTime: "t2" });
+  assert.equal(resolutionKey(source, authored), resolutionKey(source, recreated));
+  assert.notEqual(resolutionKey(source, authored), resolutionKey(source, appended));
+});
+
+test("a registered type without a content id keeps the canonical JSON key", () => {
+  registerReactPlotType({
+    definition: {
+      kind: "contentless",
+      validateData: (value) => value,
+      defaults: () => ({}),
+      projectSettings: () => ({}),
+      resolve: async () => null,
+      present: (content) => content,
+    },
+    backends: [],
+  });
+  const source = {};
+  const node = {
+    kind: "plot" as const,
+    type: "contentless",
+    data: { kind: "inline" as const, props: { series: [] } },
+  };
+  const recreated = { kind: "plot" as const, type: "contentless", data: { props: { series: [] }, kind: "inline" as const } };
+  assert.match(resolutionKey(source, node), /^src\d+\|plot:contentless:/);
+  assert.equal(resolutionKey(source, node), resolutionKey(source, recreated));
 });

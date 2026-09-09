@@ -1,5 +1,7 @@
+import type { DataSpec } from "../../../packages/spec/src/spec.ts";
 import type { RegisteredPlotDefinition, SettingsRecord } from "./contracts.ts";
 import { registerPlotType } from "./registry.ts";
+import { setContentIdResolver } from "../resources/resolution-cache.ts";
 import type { ReactPlotBackend } from "../backends/react.ts";
 
 export interface RegisteredReactPlotType {
@@ -60,3 +62,15 @@ export function clearReactPlotTypesForTest(): void {
   registrations.clear();
   listeners.clear();
 }
+
+// The resolution cache keys authored content by a plot definition's own content
+// id when it has one. It cannot import this module (shared resources must not
+// reach up into the plot layer — `check:plot-boundary`), so the registry hands
+// the lookup down instead. `undefined` means "not registered yet": the cache
+// then keys by canonical JSON without memoising, and adopts the definition's id
+// on the registration re-render.
+setContentIdResolver((type, data) => {
+  const registered = registrations.get(type);
+  if (!registered) return undefined;
+  return { contentId: registered.definition.contentId?.(data as DataSpec) ?? null };
+});
