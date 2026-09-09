@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en" data-cairn-harness="self-driving">
+  <head>
+    <meta charset="utf-8" />
+    <title>compare grid interactions harness</title>
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 13px; padding: 12px; background: #111; color: #eee; }
+      h1 { font-size: 15px; margin: 0 0 8px; }
+      #status { font-size: 28px; font-weight: bold; margin-bottom: 10px; }
+      #result div { white-space: pre-wrap; }
+      /* The 18-pane grid: 6 columns x 3 rows of 150px, wide enough that every
+         cell is inside the runner's 1600x1000 viewport, so the lazy gate mounts
+         all 18 panes without any scrolling. */
+      #grid-host { width: 1260px; height: 480px; background: #1a1a1a; }
+      #h2-host, #h13a-host, #h13b-host { width: 320px; height: 170px; background: #1a1a1a; margin-top: 8px; }
+      .sections { display: flex; gap: 8px; flex-wrap: wrap; }
+    </style>
+  </head>
+  <body>
+    <h1>compare grid — 18 panes through step changes, operation changes, gestures, remount and resize</h1>
+    <div id="status">RUNNING&hellip;</div>
+    <!-- The main scenario's mount (18 compare children in one 6-column grid). -->
+    <div id="grid-host"></div>
+    <div class="sections">
+      <!-- H2: a resolve that fails once must recover after the backoff with no
+           spec change. -->
+      <div id="h2-host"></div>
+      <!-- H13a: the host is mounted DETACHED and attached a frame later. -->
+      <div id="h13a-host"></div>
+      <!-- H13b: the panel starts `display:none` and is shown after settle. -->
+      <div id="h13b-host"></div>
+    </div>
+    <div id="result"></div>
+    <!-- Self-driving (see <html data-cairn-harness>): the page drives every
+         action itself and settles #status to PASS/FAIL, so `npm run test:harness`
+         runs it in the DEFAULT set. The WebGPU pass is skipped (loudly) when the
+         host has no adapter; the CPU pass always runs. -->
+    <script type="module" src="./compare-grid-interactions.browser.bundle.js"></script>
+  </body>
+</html>

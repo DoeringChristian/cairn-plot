@@ -1974,6 +1974,16 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   };
   const markRendered = (): void => {
     lastRenderedRef.current = { id: renderId, uv: uploadVersion, ct: poolTick };
+    // TEST HOOK — `data-presented-key`: the content identity of the frame this
+    // pane has actually SUBMITTED (`A:<contentKeyA>|B:<contentKeyB>|op|mode`, the
+    // snapshot's own flip key). A harness driving many panes through many source
+    // swaps cannot otherwise tell "painted the step it was asked for" from
+    // "painted, but still showing step N-1" — the pixels of two steps of the same
+    // run are identical. Written imperatively on the canvas, never through React
+    // state, so the stamp costs no render and cannot trigger one; production code
+    // never reads it. Read by
+    // `compare/__tests__/compare-grid-interactions.browser.ts`.
+    canvasRef.current?.setAttribute("data-presented-key", snapshot.contentKey);
   };
 
   // PRE-PAINT (paint-atomic) render for a RESIDENT slot flip. Runs in the layout

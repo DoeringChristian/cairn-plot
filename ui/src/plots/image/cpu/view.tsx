@@ -157,6 +157,25 @@ interface CpuPaneSyncProps {
    *  folds into the shell's "modified" state exactly as it does on the GPU pane,
    *  so a compare cell's HOME button lights up on either backend. */
   compareModified?: boolean;
+  /** TEST HOOK — the value `CpuPresentation` stamps on the canvas as
+   *  `data-presented-key` after a paint. See {@link presentedKeyOf}. */
+  presentedKey?: string;
+}
+
+/**
+ * TEST HOOK — `data-presented-key`: the content identity of the operands this
+ * pane paints, in the same `A:<a>|B:<b>` shape the GPU pane stamps from its
+ * render snapshot (the GPU string carries a trailing `|op|mode`; both carry the
+ * operand content keys, which is what a harness matches on). A harness driving
+ * many panes through many source swaps cannot otherwise tell "painted the step
+ * it was asked for" from "painted, but still showing step N-1" — two steps of
+ * one run decode to identical pixels. Production code never reads it. Read by
+ * `compare/__tests__/compare-grid-interactions.browser.ts`.
+ */
+function presentedKeyOf(p: ImageBackendInput): string {
+  const a = p.compareSource?.contentKeyA ?? p.source.contentKey ?? "";
+  const b = p.compareSource?.contentKeyB ?? "";
+  return `A:${a}|B:${b}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,6 +197,7 @@ function CpuPresentation({
   canvasRef,
   foreground,
   split,
+  presentedKey,
 }: {
   content: CpuContent;
   viewport: ImageViewport | null;
@@ -186,6 +206,8 @@ function CpuPresentation({
    *  REFERENCE quad with its own grid (the GPU compositor's framing). */
   foreground?: CpuContent;
   split?: number;
+  /** TEST HOOK — stamped on the canvas after a paint; see {@link presentedKeyOf}. */
+  presentedKey?: string;
 }) {
   const appliedRef = useRef<{ width: number; height: number } | null>(null);
   const foregroundSource = foreground?.source ?? null;
@@ -218,7 +240,10 @@ function CpuPresentation({
     } else {
       paintViewport(ctx, viewport, content.source);
     }
-  }, [viewport, content.source, content.version, foregroundSource, foregroundVersion, split, canvasRef]);
+    // TEST HOOK (see `presentedKeyOf`) — stamped only after a real paint, so a
+    // pane HOLDING its previous frame keeps advertising the frame it is showing.
+    if (presentedKey !== undefined) canvas.setAttribute("data-presented-key", presentedKey);
+  }, [viewport, content.source, content.version, foregroundSource, foregroundVersion, split, canvasRef, presentedKey]);
   return (
     <canvas
       ref={canvasRef}
@@ -679,6 +704,7 @@ function CpuSdrImagePane(props: Uint8SurfaceProps & CpuPaneSyncProps) {
             canvasRef={canvasRef}
             foreground={split ? foregroundContent : undefined}
             split={split?.splitPosition}
+            presentedKey={props.presentedKey}
           />
           <CpuStatus content={content} />
           {split && (
@@ -1050,6 +1076,7 @@ function CpuHdrImagePane(props: FloatSurfaceProps & CpuPaneSyncProps) {
             canvasRef={canvasRef}
             foreground={split ? foregroundContent : undefined}
             split={split?.splitPosition}
+            presentedKey={props.presentedKey}
           />
           <CpuStatus content={content} />
           {split && (
@@ -1394,6 +1421,7 @@ export default function CpuImagePane(backendProps: ImageBackendInput): JSX.Eleme
       ? compare.operationId
       : undefined,
     isCompareMode: isCompare,
+    presentedKey: presentedKeyOf(backendProps),
     compareFallback: compare?.fallback ?? null,
     compareModified: compare?.compareModified ?? false,
     compareSplit: isSplit && compare
