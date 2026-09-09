@@ -49,7 +49,7 @@
  * there is no negative cache: a cached failure looks exactly like "still
  * loading" to the pane, and hid the real error from the surface.
  */
-import { fetchWithTimeout } from "../../../resources/fetch-image.ts";
+import { asFetchTimeoutError, fetchWithTimeout } from "../../../resources/fetch-image.ts";
 import { setCachedLoadedImageData } from "./cache.ts";
 import { DecodeCancelled, enqueueDecode, releaseDecode, retainDecode } from "./decode-queue.ts";
 import { createLruMap } from "./lru-map.ts";
@@ -307,7 +307,13 @@ const defaultDeps: DecodedImageDeps = {
     if (!response.ok || response.type === "opaque") {
       throw new Error(`[cairn] decodedImage: ${response.status} for ${url}`);
     }
-    return await response.blob();
+    try {
+      return await response.blob();
+    } catch (err) {
+      // The header deadline can fire between the response resolving and this
+      // read; say so, instead of a bare `AbortError`.
+      throw asFetchTimeoutError(err, url);
+    }
   },
   decodeBlob(blob: Blob): Promise<ImageBitmap> {
     // `"default"` colour-space conversion keeps today's pixels (the element

@@ -37,7 +37,13 @@ import { applyChannelSlice } from "../resources/channel-slice.ts";
 import type { PlotSettings } from "../../../settings/schema.ts";
 import { defaultSettingsForNode } from "../../settings.ts";
 import { CellSettingsContext, useSharedPlot, usePaneVisible } from "../../../host/plot-context.ts";
-import { shouldHoldPrevious, HOLD_TTL_MS } from "./hold-previous.ts";
+import {
+  heldForMs,
+  nextHoldClock,
+  shouldHoldPrevious,
+  HOLD_TTL_MS,
+  type HoldClock,
+} from "./hold-previous.ts";
 import { ReactBackendOutlet } from "../../../host/react-backend.ts";
 import { withoutSettingsPlumbing } from "../../../host/presentation.ts";
 import {
@@ -326,8 +332,12 @@ export function ImageHostAdapter({
   const lastReadyRef = useRef<
     { base: string; slot: string | null; dataProps: Record<string, unknown> } | null
   >(null);
-  // When the CURRENT hold started (null = not holding), for the TTL.
-  const heldSinceRef = useRef<number | null>(null);
+  // When the hold for a given resolve key started. Keyed, and STICKY: once the
+  // deadline for that key has passed the record STAYS, so the pane keeps showing
+  // the loading state instead of starting a fresh 15 s hold on the next render
+  // (which would be a saw: hold 15 s, blink, hold 15 s, …). Only a resolution or
+  // a NEW key clears it.
+  const heldSinceRef = useRef<HoldClock | null>(null);
   const [, bumpHold] = useState(0);
   const lastReady = lastReadyRef.current;
   const nowMs = Date.now();
@@ -338,23 +348,25 @@ export function ImageHostAdapter({
     sameSlot: slotKey !== null && lastReady.slot === slotKey,
     sameSource: lastReady.base === baseKey,
     error: cacheError,
-    heldForMs: heldSinceRef.current === null ? 0 : nowMs - heldSinceRef.current,
+    heldForMs: heldForMs(heldSinceRef.current, resolveKey, nowMs),
   })
     ? lastReady.dataProps
     : undefined;
   const dataProps = resolvedNow ?? held;
   if (resolvedNow !== undefined) {
     lastReadyRef.current = { base: baseKey, slot: slotKey, dataProps: resolvedNow };
-    heldSinceRef.current = null;
-  } else if (held !== undefined) {
-    heldSinceRef.current ??= nowMs;
-  } else {
-    heldSinceRef.current = null;
   }
+  heldSinceRef.current = nextHoldClock(heldSinceRef.current, {
+    key: resolveKey,
+    resolved: resolvedNow !== undefined,
+    holding: held !== undefined,
+    now: nowMs,
+  });
   const holding = held !== undefined;
   useEffect(() => {
     if (!holding) return;
-    const remaining = Math.max(0, HOLD_TTL_MS - (Date.now() - (heldSinceRef.current ?? Date.now())));
+    const startedAt = heldSinceRef.current?.at ?? Date.now();
+    const remaining = Math.max(0, HOLD_TTL_MS - (Date.now() - startedAt));
     const timer = setTimeout(() => bumpHold((v) => v + 1), remaining + 1);
     return () => clearTimeout(timer);
   }, [holding, resolveKey]);

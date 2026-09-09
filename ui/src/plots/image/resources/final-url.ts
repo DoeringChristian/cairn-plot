@@ -1,3 +1,5 @@
+import { fetchWithTimeout } from "../../../resources/fetch-image.ts";
+
 /**
  * Content-addressing under live / redirecting "query" URLs.
  *
@@ -35,7 +37,11 @@ export async function resolveFinalUrl(url: string): Promise<string> {
   if (!/^https?:/i.test(url)) return url;
   for (const method of ["HEAD", "GET"] as const) {
     try {
-      const res = await fetch(url, { method, redirect: "follow" });
+      // Same header deadline as every other resolve-path fetch: this probe runs
+      // BEFORE the decode, so a hung endpoint here would stall the pane just as
+      // effectively — with the extra sting that the failure path is a silent
+      // fallback, so nothing would ever surface.
+      const res = await fetchWithTimeout(url, { init: { method, redirect: "follow" } });
       if (res.ok) return res.url || url;
     } catch {
       // network / CORS / method-not-allowed — try the next method, then fall

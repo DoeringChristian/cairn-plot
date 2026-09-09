@@ -910,6 +910,11 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    // Recorded SYNCHRONOUSLY, before the async acquisition: a canvas swapped
+    // while `acquirePane` is still in flight must still be noticed by the ref
+    // callback (which compares against this), or the epoch would never advance
+    // and the handle would land on the detached element.
+    acquiredCanvasRef.current = canvas;
     let cancelled = false;
     // HDR-out gate: requires (1) the WebGPU device reporting `capabilities.hdr`,
     // (2) the OS/display actually reporting extended dynamic range (an HDR surface
@@ -978,7 +983,6 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
               return;
             }
             paneHandleRef.current = handle;
-            acquiredCanvasRef.current = canvas;
             setPaneReady(true);
           })
           .catch((err) => {
@@ -1962,6 +1966,20 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   // fires. Both the pre-paint layout effect and the post-paint effect consult this
   // one ref, so a resident flip renders exactly once (pre-paint), and the post-paint
   // effect skips the duplicate.
+  // AN EMPTY PANE (D2). `data: {hash: null}` is cairn's "no data for this step"
+  // cell: it resolves to a source with no URL, so there is nothing to upload and
+  // nothing to paint. The SDR effect above returns early for it — which used to
+  // be the WHOLE story on this backend: no message, no attribute, no stamp, an
+  // indefinitely blank pane where the CPU backend says "no image". Say the same
+  // thing here, and stamp the null-source identity so a watcher can tell
+  // "settled, empty" from "still loading" (the paint path never runs, so
+  // `markRendered` never stamps).
+  const isEmpty = !hdrMode && !hasCompare && !(props as Uint8SurfaceProps).imageUrl;
+  useEffect(() => {
+    if (!isEmpty) return;
+    canvasRef.current?.setAttribute("data-presented-key", snapshot.contentKey);
+  }, [isEmpty, snapshot.contentKey]);
+
   const renderId = useMemo(() => ({}), [renderPass]);
   if (contentEpochIdentityRef.current !== snapshot.contentKey) {
     contentEpochIdentityRef.current = snapshot.contentKey;
@@ -2511,18 +2529,32 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
   // handle is bound to (acquisition is mount-only, deps `[]`), the park/restore
   // IntersectionObserver and the viewport ResizeObserver. Clearing the error
   // then remounted a fresh canvas that nothing was bound to or measuring: the
-  // pane stayed blank for good. The shell stays mounted; the message sits above
-  // the canvas, opaque and pointer-capturing so the dead pane cannot be dragged
-  // or split-dragged underneath it.
+  // pane stayed blank for good. The shell stays mounted and the message covers
+  // the canvas at `z-20` — ABOVE the surface, BELOW the toolbar's `z-30`, so the
+  // pane's controls stay reachable while the error stands. It is opaque, and the
+  // split divider is suppressed beneath it; the pan/zoom gestures are delegated
+  // on the viewport (not on this element), so they keep working, which is what
+  // lets a user look around the previous frame's neighbours while one operand is
+  // broken.
   const errorOverlay = operandError ? (
     <div
-      className="absolute inset-0 z-30"
+      className="absolute inset-0 z-20"
       data-gpu-image-error=""
       role="status"
       aria-live="polite"
     >
       <PaneUnavailable title="Image unavailable" body={operandError} />
     </div>
+  ) : null;
+  // The "no image" twin of that overlay, matching `CpuStatus`'s empty state.
+  const emptyOverlay = isEmpty && !operandError ? (
+    <span
+      className="absolute inset-0 flex items-center justify-center text-xs text-fg-muted"
+      data-gpu-image-empty=""
+      role="status"
+    >
+      no image
+    </span>
   ) : null;
   return (
     <ImagePaneShell
@@ -2563,6 +2595,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
             <SplitDivider splitPosition={splitPosition} onChange={changeSplit} onReset={() => changeSplit(0.5)} />
           )}
           {errorOverlay}
+          {emptyOverlay}
         </>
       }
       imageOverlay={imageOverlay}

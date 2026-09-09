@@ -297,22 +297,47 @@ async function main(): Promise<void> {
   report(softFailure,
     `first activation failure tears down without notifying: failed=${failed.join(",")}, live=${firstFailSnapshot.panes.live}, waiting=${firstFailSnapshot.panes.waiting}`);
   ok &&= softFailure;
-  // Each new source is fresh evidence and buys one retry; the synthetic device
-  // is re-armed so every one of them fails again (`failSurface` is one-shot).
-  for (let attempt = 0; attempt < MAX_ACTIVATION_RETRIES; attempt++) {
+  // A new source is fresh evidence and buys a retry. The source must be
+  // INSTALLED before the pane is admitted (clearing the failure must not admit
+  // against the old one), so this retry is allowed to SUCCEED: the pane comes
+  // back live, having uploaded the source it was handed.
+  const writesBeforeRecovery = writes;
+  broken.handle.setSource(upload(16), "broken:recovered");
+  broken.handle.restore();
+  await tick();
+  const recoveredSnapshot = getGpuPoolMemorySnapshot();
+  const recovered = !failed.includes("broken") && !broken.handle.isParked &&
+    writes > writesBeforeRecovery && recoveredSnapshot.panes.live === 1;
+  report(recovered,
+    `a failed pane recovers on the next source and uploads it: live=${recoveredSnapshot.panes.live}, ` +
+    `writes=${writes - writesBeforeRecovery}, failed=${failed.join(",")}`);
+  ok &&= recovered;
+  releasePane(broken.handle);
+
+  // A pane that keeps failing spends its budget and IS reported. Each attempt
+  // installs its own source and re-arms the synthetic failure (`failSurface` is
+  // one-shot), so all of them activate against `stuck:<n>`.
+  const stuck = await pane("stuck", admitted, failed);
+  stuck.handle.setSource(upload(16), "stuck:0");
+  stuck.handle.restore();
+  await tick(); // one clean activation, so the retry budget applies at all
+  for (let attempt = 0; attempt <= MAX_ACTIVATION_RETRIES; attempt++) {
     failSurface = true;
-    broken.handle.setSource(upload(16), `broken:${attempt}`);
-    broken.handle.restore();
+    // Park first: a LIVE pane rebinds its texture in place and never re-creates
+    // its surface, so it would not reach the synthetic failure at all.
+    stuck.handle.park();
+    stuck.handle.setSource(upload(16), `stuck:${attempt + 1}`);
+    stuck.handle.restore();
     await tick();
   }
   failSurface = false;
   const failedSnapshot = getGpuPoolMemorySnapshot();
-  const failureSafe = failed.includes("broken") && broken.handle.isParked && !broken.handle.isWaiting &&
+  const failureSafe = failed.includes("stuck") && stuck.handle.isParked && !stuck.handle.isWaiting &&
     failedSnapshot.panes.live === 0;
   report(failureSafe,
     `activation failure notifies after the retry budget: failed=${failed.join(",")}, live=${failedSnapshot.panes.live}, waiting=${failedSnapshot.panes.waiting}`);
   ok &&= failureSafe;
-  releasePane(broken.handle);
+  releasePane(stuck.handle);
 
   // Runtime retention changes trim existing zero-ref shared entries now, not on
   // a future upload/release, while the device remains registered for diagnostics.

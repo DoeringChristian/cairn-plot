@@ -815,23 +815,36 @@ function noteContentChange(entry: PaneEntry): void {
 export const MAX_ACTIVATION_RETRIES = 3;
 
 /**
- * Clear a soft activation failure when fresh evidence arrives (H7).
+ * Clear a soft activation failure when fresh evidence arrives (H7), and put the
+ * pane back in the admission queue.
  *
- * Evidence is one of: a NEW content generation, the pane becoming visible again,
- * or a caller handing this pane a new SOURCE. The last one is separate because
- * `replacePrimarySource`/`replaceSecondarySource` refuse to touch a failed entry
- * — they run BEFORE `noteContentChange`, so the generation has not moved yet and
- * a generation test would reject the very evidence they carry.
+ * Evidence here is a NEW content generation or the pane becoming visible again.
+ * A caller handing the pane a new SOURCE is evidence too, but it takes the
+ * flag-only {@link clearSoftActivationFailure} instead: `replacePrimarySource`
+ * refuses to touch a failed entry and runs BEFORE `noteContentChange`, so at
+ * that point the new source is not installed yet and admitting would activate
+ * the pane against the old one. Its own `noteContentChange` + enqueue path
+ * admits it a few lines later, with the new source in place.
  */
-function reconsiderFailedEntry(entry: PaneEntry, evidence: "content" | "visibility" | "source"): void {
-  if (!entry.failed || entry.disposed) return;
-  if (entry.activationFailures > MAX_ACTIVATION_RETRIES) return;
+function reconsiderFailedEntry(entry: PaneEntry, evidence: "content" | "visibility"): void {
   // Only a genuinely NEW generation counts as content evidence.
-  if (evidence === "content" && entry.contentGeneration <= entry.failedGeneration) return;
-  entry.failed = false;
+  if (evidence === "content" && entry.failed && entry.contentGeneration <= entry.failedGeneration) return;
+  if (!clearSoftActivationFailure(entry)) return;
   if (!hasPrimarySource(entry) || documentHidden || !entry.visible) return;
   enqueueWaiter(entry);
   admitWaiters();
+}
+
+/**
+ * Clear the `failed` FLAG (only) if this entry still has retries left. Returns
+ * whether it was cleared. The source-replacement path uses this half on its own:
+ * it must not admit the pane before the new source is installed.
+ */
+function clearSoftActivationFailure(entry: PaneEntry): boolean {
+  if (!entry.failed || entry.disposed) return false;
+  if (entry.activationFailures > MAX_ACTIVATION_RETRIES) return false;
+  entry.failed = false;
+  return true;
 }
 
 function removeWaiter(entry: PaneEntry): void {
@@ -1245,8 +1258,13 @@ function activateEntry(entry: PaneEntry): boolean {
 
 function handleDeviceLoss(device: Device, reason: unknown): void {
   for (const entry of panes) {
+    if (entry.device !== device || entry.disposed) continue;
     // A lost device is terminal for every pane on it — no retry budget applies.
-    if (entry.device === device && !entry.disposed) failEntryActivation(entry, reason, { permanent: true });
+    // An entry ALREADY in a soft-failed state must be told too: `failEntryActivation`
+    // early-returns on `entry.failed`, so a pane that had used one silent retry
+    // would have been left waiting for evidence from a device that is gone.
+    entry.failed = false;
+    failEntryActivation(entry, reason, { permanent: true });
   }
   // Failed panes remain until their React owners dispose, but the dead device
   // must not remain strongly registered and its opportunistic caches are useless.
@@ -1651,8 +1669,11 @@ function replacePrimarySource(
 ): void {
   // A new source is fresh evidence (H7): a soft failure gets its retry here,
   // BEFORE the refusal below — otherwise the only way back for a failed pane
-  // would be a visibility change.
-  reconsiderFailedEntry(entry, "source");
+  // would be a visibility change. Only the FLAG is cleared: the source is then
+  // installed by the body below, and the ordinary `noteContentChange` +
+  // enqueue path admits the pane with the new source in place. (Admitting from
+  // inside this clear would activate the pane against the OLD source.)
+  clearSoftActivationFailure(entry);
   if (entry.disposed || entry.failed) {
     lease?.release();
     return;
@@ -1720,7 +1741,7 @@ function replaceSecondarySource(
   lease: SourceUploadLease | null,
   reacquire: (() => SourceUploadLease) | null,
 ): void {
-  reconsiderFailedEntry(entry, "source"); // see `replacePrimarySource`
+  clearSoftActivationFailure(entry); // see `replacePrimarySource`
   if (entry.disposed || entry.failed) {
     lease?.release();
     return;

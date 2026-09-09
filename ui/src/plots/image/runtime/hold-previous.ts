@@ -79,3 +79,37 @@ export function shouldHoldPrevious(input: HoldPreviousInput): boolean {
   // Source swap: only an authored opt-in on an unchanged slot holds.
   return input.holdFlag && input.sameSlot;
 }
+
+// ---------------------------------------------------------------------------
+// The hold CLOCK — the caller-side half of the TTL, extracted so the "sticky"
+// property is testable. The deadline belongs to the RESOLVE KEY, not to the
+// render: reset it merely because the hold lapsed and the pane would hold
+// another 15 s on the very next render, then lapse, then hold again — a saw that
+// shows a stale frame most of the time instead of the loading state.
+// ---------------------------------------------------------------------------
+
+export interface HoldClock {
+  /** The resolve key this deadline belongs to. */
+  readonly key: string;
+  /** When the pane first held a frame for that key. */
+  readonly at: number;
+}
+
+/**
+ * The clock's next state. Cleared by a RESOLUTION (there is a real frame now)
+ * and re-armed only for a NEW key; a lapsed clock for the current key is kept,
+ * which is what keeps the pane on the loading state until a result arrives.
+ */
+export function nextHoldClock(
+  previous: HoldClock | null,
+  args: { key: string; resolved: boolean; holding: boolean; now: number },
+): HoldClock | null {
+  if (args.resolved) return null;
+  if (args.holding && previous?.key !== args.key) return { key: args.key, at: args.now };
+  return previous;
+}
+
+/** How long the current key's frame has been held (0 when it is not this key's). */
+export function heldForMs(clock: HoldClock | null, key: string, now: number): number {
+  return clock?.key === key ? now - clock.at : 0;
+}

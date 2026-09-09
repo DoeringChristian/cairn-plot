@@ -125,16 +125,18 @@ const expandedNodes = new WeakMap<CompareNode, GridNode | null>();
  * hold a frame for a node it cannot identify (a stacked flip between two
  * identity-less panes would otherwise show the wrong slot's picture).
  *
- * The identity is the parent's own identity plus the FOREGROUND's role — its
- * authored label when there is one, else its operand index. Deliberately NOT the
- * operand hashes: a content-derived id changes on every iteration step, which is
- * exactly when the pane needs its slot to look unchanged, so hashing would
- * disable the very hold this id exists to enable. Role-derived ids are unique
- * among siblings (the only place a cell key or a slot key is compared) and
- * survive a step, a reorder and a re-authored spec.
+ * The identity is the parent's own identity plus the FOREGROUND's role: always
+ * the operand INDEX, with the authored label appended when there is one. The
+ * index is what makes it unique — two operands may legitimately carry the same
+ * label, and a duplicate id is worse than a positional one (the grid drops it
+ * back to the positional key and warns). Deliberately NOT the operand hashes: a
+ * content-derived id changes on every iteration step, which is exactly when the
+ * pane needs its slot to look unchanged, so hashing would disable the very hold
+ * this id exists to enable. These ids survive a step, a reorder and a
+ * re-authored spec.
  */
 function pairChildId(parent: CompareNode, foregroundLabel: string | undefined, index: number): string {
-  return `${parent.id ?? "compare"}|${foregroundLabel ?? index}`;
+  return `${parent.id ?? "compare"}|${index}${foregroundLabel ? `:${foregroundLabel}` : ""}`;
 }
 
 /** Lower a multi-output image plan into layout-only pair nodes for the host. */

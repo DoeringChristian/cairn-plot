@@ -149,6 +149,27 @@ test("fetchImageBytes: a rejecting fetch still surfaces as a rejection after its
   assert.equal(calls, 3, "the first try plus both retries");
 });
 
+test("fetchWithTimeout: a slow BODY is never cut off — the deadline is on the headers", async () => {
+  // A healthy 200 MB EXR can take minutes to transfer. The timer must be cleared
+  // when the response resolves, not when the body finishes.
+  const fetchImpl = (async (_url: string, init?: RequestInit) => {
+    const body = new Promise<string>((resolve) => setTimeout(() => resolve("ok"), 60));
+    return {
+      status: 200,
+      ok: true,
+      // The signal stays live in the real API too; what matters is that nothing
+      // aborts it any more once the response has been handed over.
+      async text() {
+        if (init?.signal?.aborted) throw new DOMException("aborted", "AbortError");
+        return body;
+      },
+    } as unknown as Response;
+  }) as unknown as typeof fetch;
+  const res = await fetchWithTimeout("u", { fetchImpl, timeoutMs: 20 });
+  await sleep(40); // well past the deadline, with the body still streaming
+  assert.equal(await res.text(), "ok");
+});
+
 test("the default deadline is the documented one", () => {
   assert.equal(IMAGE_FETCH_TIMEOUT_MS, 60_000);
 });

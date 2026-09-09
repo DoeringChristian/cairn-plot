@@ -50,7 +50,7 @@
 // it is re-exported here so the public decoder surface is unchanged. `.npz`
 // members map through it on the main thread (the archive is already inflated
 // there); a raw `.npy` routes through the pool (`decoders/npy-decode.ts`).
-import { fetchWithTimeout } from "../../../resources/fetch-image.ts";
+import { asFetchTimeoutError, fetchWithTimeout } from "../../../resources/fetch-image.ts";
 import { npyArrayToDecoded } from "./decoders/npy-image.ts";
 import { decodeNpyBytes } from "./decoders/npy-decode.ts";
 import type { DeepFlattenController } from "../definition/content.ts";
@@ -448,7 +448,11 @@ async function decodeBrowserNative(src: ImageSource): Promise<DecodedImage> {
         `cairn-plot decodeImage: failed to fetch ${src.url} (${res.status})`,
       );
     }
-    blob = await res.blob();
+    try {
+      blob = await res.blob();
+    } catch (err) {
+      throw asFetchTimeoutError(err, src.url); // see `asFetchTimeoutError`
+    }
   } else {
     throw new Error("cairn-plot decodeImage: source has neither bytes nor url");
   }
@@ -501,6 +505,8 @@ async function decodeJpeg(src: ImageSource): Promise<DecodedImage> {
     try {
       const res = await fetchWithTimeout(src.url);
       if (res.ok) bytes = await res.arrayBuffer();
+      // (A body-read abort falls through to `decodeBrowserNative`, which reports
+      //  it with the URL — this branch is deliberately best-effort.)
     } catch {
       /* fall through: decodeBrowserNative(src) will surface the fetch error */
     }
@@ -643,7 +649,12 @@ export async function decodeImage(
         `cairn-plot decodeImage: failed to fetch ${src.url} (${res.status})`,
       );
     }
-    const bytes = await res.arrayBuffer();
+    let bytes: ArrayBuffer;
+    try {
+      bytes = await res.arrayBuffer();
+    } catch (err) {
+      throw asFetchTimeoutError(err, src.url); // see `asFetchTimeoutError`
+    }
     src = {
       ...src,
       bytes,

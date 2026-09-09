@@ -55,6 +55,31 @@ test("equivalent recreated descriptors reuse content-addressed resolution keys",
   assert.notEqual(resolutionKey(source, first), resolutionKey(source, otherIteration));
 });
 
+test("a compare's resolution key ignores its presentation", () => {
+  // The resolved value is the decoded operand PAIR; split / difference / flip are
+  // display decisions the pane applies to it. Keying on the presentation made an
+  // operation change a cache miss, which re-decoded both operands of every pane
+  // in the grid and blanked them all to "Loading…".
+  const source = {};
+  const split = {
+    kind: "compare",
+    type: "image",
+    presentation: "split",
+    strategy: "reference",
+    referenceIndex: 0,
+    operands: [{ kind: "image", hash: "ref", format: "exr" }, { kind: "image", hash: "run", format: "exr" }],
+  };
+  const difference = { ...split, presentation: "difference" };
+  const otherPair = {
+    ...split,
+    operands: [{ kind: "image", hash: "ref", format: "exr" }, { kind: "image", hash: "other", format: "exr" }],
+  };
+  const otherReference = { ...split, referenceIndex: 1 };
+  assert.equal(resolutionKey(source, split), resolutionKey(source, difference));
+  assert.notEqual(resolutionKey(source, split), resolutionKey(source, otherPair));
+  assert.notEqual(resolutionKey(source, split), resolutionKey(source, otherReference));
+});
+
 test("sourceKey is stable per object and distinct across objects", () => {
   const a = {};
   const b = {};

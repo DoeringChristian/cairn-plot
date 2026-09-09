@@ -114,6 +114,17 @@ test("an expanded image comparison contributes cells one level deeper", () => {
     "stack:root",
     "stack:root/cmp/comparison",
   ]);
+  // DUPLICATE LABELS stay distinct cells: the id leads with the output INDEX and
+  // only appends the label, so two operands the author labelled the same do not
+  // collide (a duplicate id would drop both back to positional keys and warn).
+  const labelled: PlotNode = { ...compare, props: { labels: ["dup", "reference", "dup"] } };
+  const duplicated = compileSessionTopology(specOf({ kind: "grid", children: [labelled] }));
+  assert.deepEqual([...duplicated.cellIds].sort(), [
+    "cell:root/cmp/comparison/cmp|0:dup",
+    "cell:root/cmp/comparison/cmp|1:dup",
+    "stack:root",
+    "stack:root/cmp/comparison",
+  ]);
   clearReactPlotTypesForTest();
   clearPlotTypesForTest();
 });

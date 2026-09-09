@@ -104,7 +104,17 @@ function descriptorContentId(node: object): string | null {
     // every image node in a document onto one entry.
     key = `plot:${record.type}:${resolved?.contentId ?? canonicalJson(record.data)}`;
   } else if (record.kind === "compare" && typeof record.type === "string" && Array.isArray(record.operands)) {
-    key = `compare:${record.type}:${String(record.presentation ?? "")}:${String(record.strategy ?? "")}:${String(record.referenceIndex ?? "")}:${canonicalJson(record.operands)}`;
+    // NOT keyed on `presentation`. What a compare RESOLVES to is the decoded
+    // operand pair (`resolveImageComparisonPair` never reads the presentation);
+    // split / difference / flip are display decisions applied to that pair by the
+    // pane. Folding the presentation in here meant every operation change was a
+    // cache MISS: on a grid of 18 compare panes, switching split → difference
+    // re-decoded 36 operands and blanked every pane to "Loading…" — and the hold
+    // could not cover it, because the pane's slot key includes the operation by
+    // design (a stacked `[image, diff]` flip must not hold the other slot's
+    // frame). Sharing the entry removes the problem instead of papering over it:
+    // the operation change is now a cache HIT and the pane never goes stale.
+    key = `compare:${record.type}:${String(record.strategy ?? "")}:${String(record.referenceIndex ?? "")}:${canonicalJson(record.operands)}`;
   }
   if (memoisable) contentIdMap.set(node, key);
   return key;

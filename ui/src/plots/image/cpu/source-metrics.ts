@@ -25,6 +25,38 @@ export interface CpuSourceMetrics {
 
 const finite = (value: number): number => Number.isFinite(value) ? value : 0;
 
+/**
+ * How long this computation may hold the main thread before handing it back.
+ * The browser's long-task threshold is 50 ms and the compare grid's budget is
+ * 200 ms; 8 ms leaves room for the surrounding React commit inside one frame.
+ */
+const YIELD_BUDGET_MS = 8;
+
+/**
+ * Hand the event loop one turn.
+ *
+ * A `MessageChannel` message is a real macrotask — which is the point: it ENDS
+ * the current task, so the browser can paint and handle input, and the work that
+ * follows is charged to a new task. `setTimeout(0)` would do the same but is
+ * clamped to ~4 ms per call, which on a grid of panes adds up to seconds of
+ * pure waiting. Falls back to it where `MessageChannel` is absent (Node's test
+ * runner has it, but a worker context might not).
+ */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (typeof MessageChannel !== "function") {
+      setTimeout(resolve, 0);
+      return;
+    }
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => {
+      channel.port1.close();
+      resolve();
+    };
+    channel.port2.postMessage(null);
+  });
+}
+
 interface SceneField {
   pixels: Float32Array;
   width: number;
@@ -140,6 +172,16 @@ async function computeCpuSourceMetricsUncached(options: ComputeCpuSourceMetricsO
   const count = width * height;
   if (count <= 0) return { mse: 0, psnr: Infinity, mae: 0 };
 
+  // ONE yield before the pixel work begins. Both scene fields are usually
+  // already in memory (a float operand IS its samples), so `await Promise.all`
+  // above resolves in a MICROTASK and every pane's computation would otherwise
+  // run in the SAME task as its neighbours: an 18-pane compare grid changing
+  // operation drained eighteen of these back to back into one ~400 ms task, with
+  // the page frozen throughout. One macrotask boundary per computation is enough
+  // to charge each pane its own task.
+  await yieldToEventLoop();
+  let yieldAfter = performance.now() + YIELD_BUDGET_MS;
+
   const sampleReference = mappedSampler(reference, mapping.offsetA, mapping.fit === "fill", width, height);
   const sampleForeground = mappedSampler(foreground, mapping.offsetB, mapping.fit === "fill", width, height);
   const a = [0, 0, 0];
@@ -190,8 +232,14 @@ async function computeCpuSourceMetricsUncached(options: ComputeCpuSourceMetricsO
         }
       }
     }
-    // Keep exact large-image CPU comparisons responsive between scanline batches.
-    if ((y + 1) % 64 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    // Keep exact large-image CPU comparisons responsive. The budget is measured
+    // in TIME, not scanlines: a fixed batch of 64 rows is milliseconds on a
+    // thumbnail and hundreds of milliseconds on a wide FLIP comparison, so the
+    // old count-based yield could not bound a task at all.
+    if (performance.now() >= yieldAfter) {
+      await yieldToEventLoop();
+      yieldAfter = performance.now() + YIELD_BUDGET_MS;
+    }
   }
 
   const channelCount = count * 3;
@@ -201,6 +249,9 @@ async function computeCpuSourceMetricsUncached(options: ComputeCpuSourceMetricsO
     psnr: mse <= 0 ? Infinity : 10 * Math.log10(1 / mse),
     mae: sumAbsolute / channelCount,
   };
+  // The perceptual tails (SSIM's windowed pass, FLIP's spatial filters) are
+  // whole-image and synchronous: give them their own task too.
+  if ((lumaA && lumaB) || (flipA && flipB)) await yieldToEventLoop();
   if (lumaA && lumaB) {
     const ssim = ssimFromLuminance(lumaA, lumaB, width, height);
     const errorMap = new Float32Array(count);
