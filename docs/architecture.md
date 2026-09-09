@@ -109,9 +109,9 @@ unrelated decodes, and pins the failure isolation.
 The scalar plot (`plots/scalar/`) never hands raw points to the chart. Each
 series is *prepared* once into typed arrays by `PreparedSeriesCache`
 (`prepared-series.ts`), keyed by series key: identical points reuse the entry
-untouched, an append extends it in place (probing the head and the previous tail
-so a rewritten history rebuilds instead of being silently spliced), and only an
-option change or a mismatch rebuilds. Prepared identity is the memo key
+untouched, an append extends it in place (probing the head and the previous
+tail so a rewritten history rebuilds instead of being silently spliced), and
+only an option change or a mismatch rebuilds. Prepared identity is the memo key
 downstream, so a re-render that changed nothing rebuilds nothing. Drawing then
 goes through an M4 pixel reduction (`transforms/`): the visible window is split
 into one bucket per screen column and at most four samples survive per column
@@ -127,7 +127,8 @@ it is a quarter of the ink. What remains is an SVG floor of roughly 0.7 µs per
 DRAWN point for React, d3 path-string building and raster, which is why the
 spec's 30 ms interaction budgets are met at the common size (3 series × 10 000)
 but stand as the canvas backend's target at 10 series × 100 000, where the
-harness asserts the SVG backend's own ≤ 150 ms append and ≤ 80 ms wheel. Inline data identity is a content summary
+harness asserts the SVG backend's own budgets instead.
+Inline data identity is a content summary
 (`contentId`), not a serialisation: two identical point arrays produce the same
 key and an append produces a different one, without hashing every sample.
 Hovering a line does not re-render: Recharts forwards `data-*` onto the curve

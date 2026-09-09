@@ -93,7 +93,12 @@ function descriptorContentId(node: object): string | null {
   if (record.kind === "plot" && typeof record.type === "string" && record.data != null) {
     const resolved = contentIdResolver?.(record.type, record.data);
     memoisable = resolved !== undefined;
-    key = resolved?.contentId ?? `plot:${record.type}:${canonicalJson(record.data)}`;
+    // Namespaced the same way the fallback is: a resolver's id is only unique
+    // WITHIN its plot type, so two types that both summarise their data as,
+    // say, "n=100:x0..x99" must not collide on one cache entry.
+    key = resolved !== undefined
+      ? `plot:${record.type}:${resolved.contentId}`
+      : `plot:${record.type}:${canonicalJson(record.data)}`;
   } else if (record.kind === "compare" && typeof record.type === "string" && Array.isArray(record.operands)) {
     key = `compare:${record.type}:${String(record.presentation ?? "")}:${String(record.strategy ?? "")}:${String(record.referenceIndex ?? "")}:${canonicalJson(record.operands)}`;
   }

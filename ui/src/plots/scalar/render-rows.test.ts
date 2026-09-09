@@ -166,3 +166,75 @@ test("wallTime and context survive the reduction", () => {
   assert.equal(rows[3]!.a__ctx, "c3");
   assert.equal("a__ctx" in rows[4]!, false); // a null context is dropped, not carried
 });
+
+test("every row carries __x: the REAL x of the pick that opened it", () => {
+  // A step axis: the drawn x is a fractional slot centre, but the tooltip must
+  // report the integer step the point actually came from.
+  const rows = buildRenderRows(prepareTwo(), ALL, 0, N - 1, COLUMNS, false);
+  const xs = new Set(Array.from({ length: N }, (_, i) => i));
+  for (const r of rows) {
+    assert.equal(typeof r.__x, "number");
+    assert.ok(Number.isInteger(r.__x), `__x ${r.__x} is not a real step`);
+    assert.ok(xs.has(r.__x as number));
+    // ... and it is the row it is drawn at, to within one column.
+    assert.ok(Math.abs((r.__x as number) - r.x) <= (N - 1) / COLUMNS);
+  }
+});
+
+test("the envelope lands in cells the curve opened: no blank-valued rows", () => {
+  const cache = new PreparedSeriesCache();
+  const p = cache.prepare(mk("a", 0), { ...OPTS, smoothing: 0.9 });
+  const columns = 200;
+  const rows = buildRenderRows([p], () => true, 0, N - 1, columns, false);
+  // Every row must carry the curve's value: a row with only `a__raw` would put
+  // series "a" in the tooltip with a blank value under the cursor.
+  const blank = rows.filter((r) => r.a === undefined);
+  assert.deepEqual(blank, [], `${blank.length} of ${rows.length} rows have no curve value`);
+});
+
+test("a widening point outside the domain keeps its exact x, not a clamped one", () => {
+  const cache = new PreparedSeriesCache();
+  // A far-off leading point, then a dense run starting inside the domain: the
+  // window widens by one on each side, and its left neighbour is that far-off
+  // point — nowhere near column 0.
+  const points = [{ x: -50_000, y: 0 }, ...Array.from({ length: 20_000 }, (_, i) => ({ x: 1500 + i, y: i % 13 }))];
+  const p = cache.prepare({ key: "a", label: "a", color: "#000", points }, OPTS);
+  const rows = buildRenderRows([p], ALL, 1000, 2000, 4, false);
+  assert.equal(rows[0]!.x, -50_000, "the outside point must not be clamped into column 0");
+  assert.equal(rows[0]!.__x, -50_000);
+  for (let i = 1; i < rows.length; i++) assert.ok(rows[i]!.x > rows[i - 1]!.x, "still x-ascending");
+  assert.ok(rows[1]!.x >= 1000, "the in-domain rows start at the domain");
+});
+
+test("one point-for-point series does not drag the others off the shared grid", () => {
+  const cache = new PreparedSeriesCache();
+  const big = cache.prepare(mk("a", 0), OPTS);
+  const alone = buildRenderRows([big], ALL, 0, N - 1, COLUMNS, false);
+  // A tiny series far to the LEFT of the domain: it reduces point-for-point.
+  const small = cache.prepare({
+    key: "b", label: "b", color: "#000",
+    points: Array.from({ length: 5 }, (_, i) => ({ x: -100 + i, y: i })),
+  }, OPTS);
+  const both = buildRenderRows([big, small], ALL, 0, N - 1, COLUMNS, false);
+  const bRows = both.filter((r) => r.b !== undefined).length;
+  assert.ok(bRows > 0 && bRows <= 5, `series b contributed ${bRows} rows`);
+  assert.equal(both.length, alone.length + bRows, "b must add only its own rows");
+  assert.ok(both.length <= CAP + 5);
+});
+
+test("two series with different x extents share one grid", () => {
+  const cache = new PreparedSeriesCache();
+  const mkRange = (key: string, from: number, to: number) => cache.prepare({
+    key, label: key, color: "#000",
+    points: Array.from({ length: to - from }, (_, i) => ({ x: from + i, y: Math.sin((from + i) / 40) })),
+  }, OPTS);
+  const rows = buildRenderRows([mkRange("a", 0, 20_000), mkRange("b", 5_000, 30_000)], ALL, 0, 29_999, COLUMNS, false);
+  assert.ok(rows.length <= CAP, `${rows.length} rows > ${CAP}`);
+  // In the overlap both series must land on the SAME rows, not on neighbours.
+  const overlap = rows.filter((r) => (r.__x as number) >= 6_000 && (r.__x as number) <= 19_000);
+  const shared = overlap.filter((r) => r.a !== undefined && r.b !== undefined).length;
+  assert.ok(shared > overlap.length * 0.8, `only ${shared} of ${overlap.length} overlap rows carry both`);
+  // Outside the overlap each series is alone, and neither strays.
+  assert.equal(rows.some((r) => r.b !== undefined && (r.__x as number) < 5_000), false);
+  assert.equal(rows.some((r) => r.a !== undefined && (r.__x as number) >= 20_000), false);
+});

@@ -252,6 +252,10 @@ export default function ScalarPlot({
   // do the rest. React never sees the hovered key; only `hoveredSeriesRef`,
   // read by the click handler, does.
   const hoveredSeriesRef = useRef<string | null>(null);
+  // Legend hover is emphasis WITHOUT a hovered plot series — kept apart so it
+  // never arms the run-selection click, but still remembered, or the next
+  // commit's repaint below would wipe the emphasis mid-hover.
+  const legendHoverRef = useRef<string | null>(null);
   /** Repaint `data-emph` for `key`. Pure DOM; nothing about hover is state. */
   const paintEmphasis = useCallback((key: string | null) => {
     const root = chartBoxRef.current;
@@ -276,12 +280,22 @@ export default function ScalarPlot({
    */
   const applyEmphasis = useCallback((key: string | null) => {
     hoveredSeriesRef.current = key;
+    // The pointer is demonstrably in the plot, so a legend hover is over.
+    if (key !== null) legendHoverRef.current = null;
     paintEmphasis(key);
   }, [paintEmphasis]);
   // Recharts rebuilds the curve <path> elements on every render, and React
   // does not manage `data-emph` (it is never a prop), so a new path would come
   // up unemphasised mid-hover. Repaint from the ref after each commit.
-  useLayoutEffect(() => { paintEmphasis(hoveredSeriesRef.current); });
+  useLayoutEffect(() => {
+    paintEmphasis(hoveredSeriesRef.current ?? legendHoverRef.current);
+  });
+
+  /** Legend hover: paint only, and remember it for the post-commit repaint. */
+  const onLegendHover = useCallback((key: string | null) => {
+    legendHoverRef.current = key;
+    paintEmphasis(key);
+  }, [paintEmphasis]);
 
   // ── Render data ──
   // How many screen columns the reduction may spend: the <Customized> plot
@@ -440,13 +454,6 @@ export default function ScalarPlot({
             scale={xScale === "log" ? "log" : "linear"}
             domain={xDomainPadded}
             allowDataOverflow
-            /* Each <Line> brings its OWN data, so the series' rows are NOT
-               index-aligned: the tooltip must resolve a hovered x by VALUE in
-               each line's array, which is what `false` here switches it to
-               (`getTooltipContent` → `findEntryInArray`). With the default
-               `true` it would index every line by one shared row index and
-               show values from the wrong x. */
-            allowDuplicatedCategory={false}
             stroke={AXIS.lineColor}
             tick={{
               fontSize: AXIS.tickFontSize,
@@ -492,7 +499,7 @@ export default function ScalarPlot({
                 <CustomLegend
                   series={series}
                   onSelect={(key) => onSeriesClick?.(key)}
-                  onHover={paintEmphasis}
+                  onHover={onLegendHover}
                   selectedKeys={selectedSeriesKeys}
                   visibility={visibility}
                 />

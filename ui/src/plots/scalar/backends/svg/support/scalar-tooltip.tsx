@@ -38,11 +38,17 @@ export function CustomTooltip({
   // included (it only honours the flag in its own default content). The faint
   // raw overlay is one of those, and it would otherwise show up as a second,
   // unlabelled row for the same series.
+  // ... and a row a series has no value in (the shared column grid can put a
+  // series' neighbour on this x) would show its label against a blank.
   const rows = payload.filter(
-    (e) => e.type !== "none" && !String(e.dataKey ?? "").endsWith("__raw"),
+    (e) => e.type !== "none" && e.value != null && !String(e.dataKey ?? "").endsWith("__raw"),
   );
   if (rows.length === 0) return null;
-  const labelNum = typeof label === "number" ? label : Number(label);
+  // The point is DRAWN at its column slot's centre, which on a step axis is a
+  // fraction; `__x` is the real x of the pick that opened the row. Prefer it.
+  const realX = rows[0]?.payload?.__x;
+  const labelValue = typeof realX === "number" ? realX : label;
+  const labelNum = typeof labelValue === "number" ? labelValue : Number(labelValue);
   return (
     // Same shared chrome (rounded, token bg/border, shadow) as every other
     // cairn-plot tooltip; only the min-width is scalar-specific.

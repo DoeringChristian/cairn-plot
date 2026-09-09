@@ -6,10 +6,11 @@
  * builds them from the pixel-reduced windows instead: per visible series, clip
  * to the x-domain ({@link visibleWindow}), pick the ≤ 5 indices per screen
  * column that a line can actually show ({@link reduceToColumns}), snap those
- * picks onto a grid SHARED by every series, materialise a reduced `Series` and
- * hand it to the unchanged {@link mergeToRows}. The row shape is therefore
- * identical to the unreduced one — tooltip, legend and the `<Line dataKey>`s
- * are untouched.
+ * picks onto a grid SHARED by every series, and fill the merged rows directly.
+ * The row shape is identical to the unreduced one `transforms/merge-rows.ts`
+ * produces — tooltip, legend and the `<Line dataKey>`s are untouched — plus a
+ * `__x` column carrying the real x of the pick that opened each row, which the
+ * tooltip shows in place of the (fractional) slot centre the point is drawn at.
  *
  * ## Why the picks are snapped to a shared grid
  * Recharts' per-render cost is `graphical items × merged rows`, not
@@ -50,8 +51,7 @@
  */
 import type { Series, SeriesPoint } from "../types.ts";
 import { visibleWindow } from "../transforms/visible-window.ts";
-import { reduceToColumns } from "../transforms/pixel-reduce.ts";
-import { mergeToRows } from "../transforms/merge-rows.ts";
+import { columnOf, reduceToColumns } from "../transforms/pixel-reduce.ts";
 import type { PreparedSeries } from "./prepared-series.ts";
 
 export type Row = { x: number } & Record<string, number | null | string>;
@@ -109,34 +109,64 @@ export function buildRenderRows(
   if (!(binHi > binLo)) { binLo = dataLo; binHi = dataHi; }
   const width = (binHi - binLo) / columns;
 
-  const picks: Pick[] = [];
-  let allBinned = true;
+  const grid: Grid = { binLo, binHi, width, columns, logX };
+  const binnedPicks: Pick[] = [];
+  const loose: Series[] = [];
   for (const { p, axis, start, end } of windows) {
     const idx = reduceToColumns(axis, p.ys, start, end, binLo, binHi, columns, p.lo, p.hi);
     if (idx.length === 0) continue;
-    // `reduceToColumns` passes small windows through untouched; those keep
-    // their exact x (and may hold more than SLOTS points in a column).
-    const binned = width > 0 && end - start > 2 * columns;
-    if (!binned) allBinned = false;
+    // `reduceToColumns` passes small windows through untouched (the exact same
+    // condition), and those keep their exact x — there is no column grid to
+    // snap them to, and they may hold more than SLOTS points in a column.
+    if (!(width > 0 && end - start > 2 * columns)) {
+      loose.push(reduceSeries(p, idx));
+      continue;
+    }
     // The faint raw overlay is an ENVELOPE, not a curve: two picks per column
     // (the extremes of `rawYs`) say everything a translucent band can say, and
     // cost 2 of the 4-5 points per column the smoothed curve needs. See
     // `envelopeColumns`.
-    const raw = binned && p.rawYs
+    const raw = p.rawYs
       ? envelopeColumns(axis, p.rawYs, start, end, binLo, width, columns, p.lo, p.hi)
       : null;
-    picks.push({ p, axis, idx, raw, binned });
+    binnedPicks.push({ p, axis, idx, raw });
   }
-  if (picks.length === 0) return [];
+  if (binnedPicks.length === 0 && loose.length === 0) return [];
 
-  const grid: Grid = { binLo, width, columns, logX };
-  if (allBinned) return mergeOnGrid(picks, grid);
-  // Mixed or exact windows: no shared grid to merge on, so go through the
-  // general row merge. These windows are small by construction, so the overlay
-  // simply rides the curve's picks there.
-  return mergeToRows(picks.map(
-    ({ p, axis, idx, binned }) => reduceSeries(p, axis, idx, binned ? grid : null),
-  ));
+  const rows = binnedPicks.length > 0 ? mergeOnGrid(binnedPicks, grid) : [];
+  // A series small enough to draw point-for-point must not drag the others off
+  // the shared grid: it is merged INTO the grid rows by exact x instead.
+  return loose.length > 0 ? mergeLoose(rows, loose) : rows;
+}
+
+/**
+ * Fold point-for-point series into rows that are already on the shared grid.
+ *
+ * Their x are exact and arbitrary, so this is the general merge — a map keyed by
+ * x and a sort — but it only ever runs over the few series small enough to have
+ * escaped the reduction, plus the grid rows they join.
+ */
+function mergeLoose(rows: Row[], loose: readonly Series[]): Row[] {
+  const byX = new Map<number, Row>();
+  for (const row of rows) byX.set(row.x, row);
+  for (const s of loose) {
+    const overlay = isOverlayKey(s.key);
+    for (const pt of s.points) {
+      let row = byX.get(pt.x);
+      if (row === undefined) { row = { x: pt.x, __x: pt.x }; byX.set(pt.x, row); }
+      row[s.key] = pt.y;
+      if (overlay) continue;
+      if (pt.wallTime != null) row[`${s.key}__wall`] = pt.wallTime;
+      if (pt.context != null) row[`${s.key}__ctx`] = pt.context;
+    }
+    if (!s.rawPoints) continue;
+    for (const pt of s.rawPoints) {
+      let row = byX.get(pt.x);
+      if (row === undefined) { row = { x: pt.x, __x: pt.x }; byX.set(pt.x, row); }
+      row[`${s.key}__raw`] = pt.y;
+    }
+  }
+  return Array.from(byX.values()).sort((a, b) => a.x - b.x);
 }
 
 /**
@@ -184,69 +214,130 @@ function envelopeColumns(
  *
  * Every point's row is addressed by `column * SLOTS + slot`, so the rows can be
  * filled in a flat array and read back already x-ascending: no hash of float x
- * and no final sort, which is what the general {@link mergeToRows} would have
- * to do. On the measured fixture this is the difference between ~10 ms and
- * ~2 ms per rebuild.
+ * and no final sort, which is what a general merge by x has to do. On the
+ * measured fixture this is the difference between ~10 ms and ~2 ms per rebuild.
  */
 function mergeOnGrid(picks: readonly Pick[], grid: Grid): Row[] {
   const cells: Array<Row | undefined> = new Array(grid.columns * SLOTS);
+  // Points the window-widening step reached for — one either side of the
+  // domain — sit OUTSIDE the columns. Clamping them into column 0 / the last
+  // column would draw them inside the frame, which on a non-uniform x looks
+  // like a spike; they keep their exact x and their own rows instead.
+  const outside = new Map<number, Row>();
   let used = 0;
-  const cellAt = (column: number, slot: number): Row => {
+
+  const cellAt = (column: number, slot: number, exactX: number): Row => {
     const at = column * SLOTS + slot;
     let row = cells[at];
     if (row === undefined) {
-      row = { x: xOfSlot(column, slot, grid) };
+      // `x` positions the point (the shared slot centre, which is what makes
+      // the grid shared); `__x` is the real x of the pick that opened the cell,
+      // for the tooltip to show instead of a fractional slot centre.
+      row = { x: xOfSlot(column, slot, grid), __x: exactX };
       cells[at] = row;
       used++;
     }
     return row;
   };
+  const outsideAt = (exactX: number): Row => {
+    let row = outside.get(exactX);
+    if (row === undefined) { row = { x: exactX, __x: exactX }; outside.set(exactX, row); }
+    return row;
+  };
+  const isOutside = (pos: number) => pos < grid.binLo || pos > grid.binHi;
+
+  // Curves first, for EVERY series, so the envelopes below can settle into
+  // cells any series' curve has opened rather than opening their own.
   for (const { p, axis, idx, raw } of picks) {
-    const { key, ys, rawYs, points } = p;
+    const { key, xs, ys, rawYs, points } = p;
+    const overlay = isOverlayKey(key);
+    // Without its own envelope (no `rawYs`) the overlay rides the curve's picks.
+    const rawOnCurve = rawYs !== null && raw === null;
+    const rawKey = `${key}__raw`;
     const wallKey = `${key}__wall`;
     const ctxKey = `${key}__ctx`;
     let col = -1;
     let slot = 0;
     for (let i = 0; i < idx.length; i++) {
       const j = idx[i]!;
-      const c = columnOf(axis[j]!, grid);
-      if (c !== col) { col = c; slot = 0; } else if (slot < SLOTS - 1) slot++;
-      const row = cellAt(c, slot);
+      const pos = axis[j]!;
+      let row: Row;
+      if (isOutside(pos)) {
+        row = outsideAt(xs[j]!);
+      } else {
+        const c = columnOf(pos, grid.binLo, grid.width, grid.columns);
+        if (c !== col) { col = c; slot = 0; } else slot++;
+        // `reduceToColumns` emits at most SLOTS picks per column and this walks
+        // the same column arithmetic, so overflowing is a broken invariant, not
+        // a case to absorb: silently reusing the last slot would drop a point.
+        if (slot >= SLOTS) {
+          throw new Error(`render-rows: ${slot + 1} picks in column ${c} of ${grid.columns} (max ${SLOTS})`);
+        }
+        row = cellAt(c, slot, xs[j]!);
+      }
       row[key] = ys[j]!;
-      // Without its own envelope (no `rawYs`, or an unbinned window) the
-      // overlay rides the curve's picks, as it always has.
-      if (rawYs && !raw) row[`${key}__raw`] = rawYs[j]!;
+      if (rawOnCurve) row[rawKey] = rawYs![j]!;
+      if (overlay) continue; // a `${key}__raw` series is an overlay, not a series
       const src = points[j]!;
       if (src.wallTime != null) row[wallKey] = src.wallTime;
       if (src.context != null) row[ctxKey] = src.context;
     }
+  }
+
+  // Envelopes second. Each column's two picks go into cells the curves already
+  // opened — nearest to the middle of the column — so the band adds ink without
+  // adding rows that would show a series' label with no value under the cursor.
+  for (const { p, axis, raw } of picks) {
+    const { key, xs, rawYs } = p;
     if (!raw || !rawYs) continue;
-    // The envelope's two picks go in the SAME columns, at fixed slots, so they
-    // land on rows the curve has usually already opened and the union stays
-    // capped at SLOTS × columns. Slots 1 and 3 keep them inside the column and
-    // in the drawn order the pass emitted them (lower index first).
     const rawKey = `${key}__raw`;
     let rawCol = -1;
+    let nth = 0;
     for (let i = 0; i < raw.length; i++) {
       const j = raw[i]!;
-      const c = columnOf(axis[j]!, grid);
-      const first = c !== rawCol;
+      const pos = axis[j]!;
+      if (isOutside(pos)) { outsideAt(xs[j]!)[rawKey] = rawYs[j]!; continue; }
+      const c = columnOf(pos, grid.binLo, grid.width, grid.columns);
+      nth = c === rawCol ? nth + 1 : 0;
       rawCol = c;
-      cellAt(c, first ? 1 : 3)[rawKey] = rawYs[j]!;
+      const slot = openSlotNear(cells, c, nth === 0 ? 1 : 3);
+      cellAt(c, slot, xs[j]!)[rawKey] = rawYs[j]!;
     }
   }
-  const out: Row[] = new Array(used);
+
+  const grid_ = new Array<Row>(used);
   let n = 0;
   for (let i = 0; i < cells.length; i++) {
     const row = cells[i];
-    if (row !== undefined) out[n++] = row;
+    if (row !== undefined) grid_[n++] = row;
   }
-  return out;
+  if (outside.size === 0) return grid_;
+  // Grid rows are ascending by construction and every outside row is beyond one
+  // end of the grid, so one sort of the few strays and a three-way splice is
+  // enough — no re-sort of the whole array.
+  const strays = Array.from(outside.values()).sort((a, b) => a.x - b.x);
+  const before = strays.filter((r) => grid_.length === 0 || r.x < grid_[0]!.x);
+  const after = strays.filter((r) => grid_.length > 0 && r.x >= grid_[0]!.x);
+  return [...before, ...grid_, ...after];
 }
 
-/** The column a point at axis position `pos` falls in — as `reduceToColumns` counts it. */
-function columnOf(pos: number, grid: Grid): number {
-  return Math.min(grid.columns - 1, Math.max(0, Math.floor((pos - grid.binLo) / grid.width)));
+/**
+ * The slot in `column` nearest `want` that a curve has already opened, or
+ * `want` itself when the column is empty.
+ *
+ * SLOTS is 5, so this is a handful of array reads — cheaper than the row it
+ * saves allocating, and much cheaper than the blank tooltip entry that row
+ * would produce.
+ */
+function openSlotNear(cells: ReadonlyArray<Row | undefined>, column: number, want: number): number {
+  const base = column * SLOTS;
+  for (let d = 0; d < SLOTS; d++) {
+    const lo = want - d;
+    if (lo >= 0 && cells[base + lo] !== undefined) return lo;
+    const hi = want + d;
+    if (hi < SLOTS && cells[base + hi] !== undefined) return hi;
+  }
+  return want;
 }
 
 /** The shared x of one slot, in DATA units. */
@@ -260,7 +351,7 @@ function logBound(x: number): number | null {
   return x > 0 && Number.isFinite(x) ? Math.log10(x) : null;
 }
 
-interface Grid { binLo: number; width: number; columns: number; logX: boolean }
+interface Grid { binLo: number; binHi: number; width: number; columns: number; logX: boolean }
 
 /** One series' selected indices: the curve's M4 picks, and the overlay's envelope. */
 interface Pick {
@@ -270,38 +361,36 @@ interface Pick {
   idx: Int32Array;
   /** Overlay picks, ≤ 2 per column; null when the overlay rides `idx` instead. */
   raw: Int32Array | null;
-  binned: boolean;
 }
 
 /**
- * A `Series` over the selected indices only. `y` is the smoothed value from
- * `ys`; `wallTime`/`context` ride along on the original point (reused as-is
- * when nothing changed, so an unsmoothed, unsnapped window allocates no
- * points). With a `grid`, x is the centre of the pick's slot in its column —
- * the same value for every series, which is what collapses the merged union.
+ * A `${key}__raw` series is the faint overlay of `key`, not a series of its own:
+ * it contributes only its value column. (This is the dataKey convention the row
+ * merge has always used — a real series key ending in `__raw` would already
+ * collide with its own overlay's column.)
  */
-function reduceSeries(p: PreparedSeries, axis: Float64Array, idx: Int32Array, grid: Grid | null): Series {
+function isOverlayKey(key: string): boolean {
+  return key.endsWith("__raw");
+}
+
+/**
+ * A `Series` over the selected indices only, at their EXACT x — this is the
+ * point-for-point path, where `reduceToColumns` passed the window through and
+ * there is no column grid to snap to. `y` is the smoothed value from `ys`;
+ * `wallTime`/`context` ride along on the original point, which is reused as-is
+ * when nothing changed, so an unsmoothed window allocates no points at all.
+ */
+function reduceSeries(p: PreparedSeries, idx: Int32Array): Series {
   const { xs, ys, rawYs, points } = p;
   const n = idx.length;
   const out: SeriesPoint[] = new Array(n);
   const raw: SeriesPoint[] | null = rawYs ? new Array(n) : null;
-  let col = -1;
-  let slot = 0;
   for (let i = 0; i < n; i++) {
     const j = idx[i]!;
     const src = points[j]!;
     const y = ys[j]!;
-    let x = xs[j]!;
-    if (grid) {
-      // Same column arithmetic as `reduceToColumns`, so the picks of a column
-      // are exactly the picks this counts; they arrive in ascending index
-      // order, which is the order the slots are handed out in.
-      const c = columnOf(axis[j]!, grid);
-      if (c !== col) { col = c; slot = 0; } else if (slot < SLOTS - 1) slot++;
-      x = xOfSlot(c, slot, grid);
-    }
-    out[i] = src.x === x && src.y === y ? src : { ...src, x, y };
-    if (raw) raw[i] = { x, y: rawYs![j]! };
+    out[i] = src.y === y ? src : { ...src, y };
+    if (raw) raw[i] = { x: xs[j]!, y: rawYs![j]! };
   }
   return { key: p.key, label: p.key, color: "", points: out, rawPoints: raw };
 }
