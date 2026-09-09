@@ -7,6 +7,8 @@ export interface DataSource {
   runtime?(hash: string): RuntimeStoreEntry | undefined;
 }
 
+import { asFetchTimeoutError, fetchWithTimeout } from "../fetch-image.ts";
+
 /** Network-backed artifact source used by embedded hosts such as Cairn. */
 export function createEndpointDataSource(
   artifactUrl: (hash: string) => string,
@@ -16,11 +18,16 @@ export function createEndpointDataSource(
   return {
     artifactUrl,
     async bytes(hash: string): Promise<ArrayBuffer> {
-      const response = await fetchArtifact(artifactUrl(hash), options.requestInit);
+      const url = artifactUrl(hash);
+      const response = await fetchWithTimeout(url, { init: options.requestInit, fetchImpl: fetchArtifact });
       if (!response.ok) {
         throw new Error(`failed to fetch artifact ${hash} (${response.status})`);
       }
-      return response.arrayBuffer();
+      try {
+        return await response.arrayBuffer();
+      } catch (err) {
+        throw asFetchTimeoutError(err, url);
+      }
     },
   };
 }

@@ -336,6 +336,15 @@ A plot is mounted from a **tree** descriptor — `{ root: PlotNode, mode?, endpo
 shape (the pre-G1 flat form is gone). `mode: "local"` reads the page's inlined
 content-addressed store; `mode: "endpoint"` fetches artifacts from a server origin.
 
+**Node identity (`id`).** Every node may carry an optional `id: string`. In a
+grid it keys the cell (React identity), derives the session path
+(`cell:<path>/<id>`) that per-cell settings are stored under, and identifies the
+pane's slot for the hold-previous behaviour of compare panes. A host that omits
+it gets positional keys: settings then follow the position, not the run, when
+children are reordered or inserted, and compare panes without an identity never
+hold a previous frame. Hosts that rebuild specs per update (iteration sliders,
+run selection) should always set it, e.g. `${runId}:${series}:${context}`.
+
 **Live / redirecting URLs are content-addressed via the final URL.** A `url`
 DataSpec (or `cp.Image(url=…)`) may point at a *live query URL* whose bytes
 change over time — a server endpoint that `302`-redirects to a

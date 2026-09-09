@@ -97,8 +97,9 @@ export class DecodePoolError extends Error {
 
 /**
  * Which pool failures could, in principle, be retried with the SAME decode run
- * inline on the main thread: the worker never ran the job (`"spawn-failed"`,
- * `"worker-error"`), or it ran it and reported a decode-level failure
+ * inline on the main thread: the worker never ran the job (`"spawn-failed"`),
+ * the worker died and the job MAY have been running (`"worker-error"` — hence
+ * the size gate in `canReplayInline`), or it ran it and reported a decode-level failure
  * (`"reply"`, which the inline path re-derives with a fresh, informative error
  * for a bad file). False for `"timeout"` and `"aborted"` (the job may already be
  * running / may have genuinely taken too long — replaying it inline can freeze

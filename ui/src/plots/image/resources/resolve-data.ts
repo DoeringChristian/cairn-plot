@@ -16,7 +16,7 @@ import {
   type DecodedImage,
 } from "./decoders.ts";
 import { resolveFinalUrl } from "./final-url.ts";
-import { fetchImageBytes } from "../../../resources/fetch-image.ts";
+import { asFetchTimeoutError, fetchImageBytes } from "../../../resources/fetch-image.ts";
 import { floatPixelsFrom, floatValues } from "../runtime/pixel-buffer.ts";
 import { describeExr } from "./decoders/exr-describe.ts";
 import { groupChannels, type ChannelGroup } from "../definition/channel-groups.ts";
@@ -80,7 +80,12 @@ export async function resolveImageData(
         if (!res.ok) {
           throw new Error(`cairn-plot: failed to fetch image ${data.url} (${res.status})`);
         }
-        const bytes = await res.arrayBuffer();
+        let bytes: ArrayBuffer;
+        try {
+          bytes = await res.arrayBuffer();
+        } catch (err) {
+          throw asFetchTimeoutError(err, data.url);
+        }
         // Single-image leaf → deep-live-flatten enabled so a deep EXR gets the
         // depth slider (`decoded.deep`, threaded into the `hdr` prop below).
         const decoded = await decodeImage(
@@ -143,7 +148,12 @@ export async function resolveImageData(
       if (item?.url && sniffFormat({ url: item.url }) === "exr") {
         const res2 = await fetchImageBytes(item.url);
         if (res2.ok) {
-          const bytes = await res2.arrayBuffer();
+          let bytes: ArrayBuffer;
+          try {
+            bytes = await res2.arrayBuffer();
+          } catch (err) {
+            throw asFetchTimeoutError(err, item.url);
+          }
           const decoded = await decodeImage(
             { bytes, url: item.url },
             { deepLiveFlatten: true, select: { part: data.part, layer: data.layer } },

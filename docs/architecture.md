@@ -97,14 +97,33 @@ heap owns it, pinned by that worker's generation counter so a respawned slot
 rejects a stale handle rather than replaying it into a fresh heap; a timeout or
 crash terminates ONLY that worker, rejecting its in-flight jobs and leaving the
 other workers and the shared queue untouched (an `ok:false` reply is an ordinary
-error, not a teardown). Both paths fall back to the same decoders running inline
-on the calling thread not only when no `Worker` exists (which is how node's
-`*.test.ts` suite runs them) but on ANY worker-side failure — a crash, the
-pool's timeout, or an `ok:false` reply — so a decode is retried on the main
-thread, where it also yields the real, informative error for a bad file. The pool is proven end-to-end only in a browser:
+error, not a teardown). Fallback to the same decoders running inline on the
+calling thread follows a three-way rule: a job the worker never ran
+(`spawn-failed`, e.g. an offline `file://` report whose blob worker cannot
+start) always replays inline; a `worker-error` (the worker died and may have
+been running the job) or a decode-level `reply` replays inline only under the
+format's byte gate (`canReplayInline`: npy up to 64 MB, EXR up to 32 MB
+decoded, estimated from the header, deep parts counted by file size); `timeout`,
+`aborted`, `disposed` and `affinity` are terminal at every layer and surface as
+the pane's error, never as a main-thread replay. The pool is proven end-to-end only in a browser:
 `decoders/__tests__/decode-pool.browser.ts` decodes eight distinct EXRs at once
 with no >50 ms main-thread longtask, interleaves deep-handle flattens with
 unrelated decodes, and pins the failure isolation.
+
+Resolution and presentation of a node share one spine. Grid cells, their
+session paths (`cell:<path>`) and the session topology all derive identity from
+`layout/grid-cell-key.ts` (a node's authored `id`, else its position), so a
+reorder moves a pane's settings with its run. `resources/resolution-cache.ts`
+keys a compare by its operands and strategy only — never by presentation — so
+switching split/difference/flip is a cache hit; a resolve failure is cached with
+an exponential backoff (2 s doubling to 60 s, decaying when quiet) and expires
+into a retry with no node change; a just-resolved payload is leased through a
+short handoff so budget eviction cannot race the consumer. `resources/scheduler.ts`
+orders resolves by priority, then viewport visibility, then FIFO, and a 60 s
+watchdog rejects a task that never settles. A compare pane that has resolved
+once keeps its last frame while the next step resolves (`runtime/hold-previous.ts`,
+bounded by a 15 s sticky expiry and keyed on the pane's identity plus operation),
+and every resolve-path fetch carries a header deadline.
 
 The scalar plot (`plots/scalar/`) never hands raw points to the chart. Each
 series is *prepared* once into typed arrays by `PreparedSeriesCache`

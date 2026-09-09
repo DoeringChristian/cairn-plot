@@ -9,7 +9,7 @@ import { deriveImageViewport, type ImageViewport } from "./image-viewport.ts";
  * committed before giving up (H9). Same bound, and the same pure predicate, as
  * the lazy gate's observer attach.
  */
-export const VIEWPORT_ATTACH_RETRY_FRAMES = 10;
+const VIEWPORT_ATTACH_RETRY_FRAMES = 10;
 
 interface Measured {
   box: { width: number; height: number };

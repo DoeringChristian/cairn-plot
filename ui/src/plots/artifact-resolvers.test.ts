@@ -42,7 +42,9 @@ test("createEndpointDataSource uses the host fetch implementation", async () => 
 
   assert.deepEqual(new Uint8Array(await source.bytes("abc")), payload);
   assert.equal(calls[0]?.url, "/artifacts/abc");
-  assert.deepEqual(calls[0]?.init, { headers: { Authorization: "Bearer test" } });
+  // The host init passes through; the source adds only its header-deadline signal.
+  assert.deepEqual(calls[0]?.init?.headers, { Authorization: "Bearer test" });
+  assert.ok(calls[0]?.init?.signal === undefined || calls[0]?.init?.signal instanceof AbortSignal);
 });
 
 // ---------------------------------------------------------------------------

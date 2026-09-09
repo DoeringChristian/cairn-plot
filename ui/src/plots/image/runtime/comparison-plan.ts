@@ -126,7 +126,8 @@ const expandedNodes = new WeakMap<CompareNode, GridNode | null>();
  * identity-less panes would otherwise show the wrong slot's picture).
  *
  * The identity is the parent's own identity plus the FOREGROUND's role: always
- * the operand INDEX, with the authored label appended when there is one. The
+ * the pair's OUTPUT index (its position among the expanded children), with the
+ * authored label appended when there is one. The
  * index is what makes it unique — two operands may legitimately carry the same
  * label, and a duplicate id is worse than a positional one (the grid drops it
  * back to the positional key and warns). Deliberately NOT the operand hashes: a
