@@ -1,0 +1,36 @@
+<!doctype html>
+<!-- `data-cairn-harness="self-driving"`: this page mounts ScalarPlot itself,
+     dispatches its own wheel/mouse gestures and settles `#status` headlessly,
+     so it joins the DEFAULT `npm run test:harness` run (no WebGPU needed).
+     Run alone with:  node scripts/test-harness.mjs --only scalar-render-cost -->
+<html lang="en" data-cairn-harness="self-driving">
+  <head>
+    <meta charset="utf-8" />
+    <title>Scalar render cost budgets</title>
+    <!-- No stylesheet link on purpose: nothing here is a *visual* assertion, the
+         chart host carries explicit inline width/height (so ResponsiveContainer
+         measures without Tailwind), and the only rules that matter for this
+         harness — the two `data-emph` hover rules that live in
+         `public/theme/plot.css` — are injected from the TS (the runner's esbuild
+         has no CSS loader, so the real file cannot be imported here). -->
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
+      #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
+      #result div { white-space: pre-wrap; }
+      /* 800 x 320 host — the geometry spec §4's budgets are stated for. */
+      #chart-host { width: 800px; height: 320px; margin: 12px 0; background: #0d1117; }
+      /* ScalarPlot's own root <div> is sized by its EMBEDDER (in the app, by the
+         pane's Tailwind classes). Without a size its ResponsiveContainer
+         measures height 0 and draws nothing, so the host sizes it here — this
+         is the embedder's job, not the plot's. */
+      #chart-host > div { width: 100%; height: 100%; }
+    </style>
+  </head>
+  <body>
+    <h1>ScalarPlot render cost — 10 series &times; 100 000 points (spec §4 budgets)</h1>
+    <div id="status">RUNNING&hellip;</div>
+    <div id="result"></div>
+    <div id="chart-host"></div>
+    <script type="module" src="./scalar-render-cost.browser.bundle.js?v=1"></script>
+  </body>
+</html>

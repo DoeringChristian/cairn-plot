@@ -106,6 +106,34 @@ thread, where it also yields the real, informative error for a bad file. The poo
 with no >50 ms main-thread longtask, interleaves deep-handle flattens with
 unrelated decodes, and pins the failure isolation.
 
+The scalar plot (`plots/scalar/`) never hands raw points to the chart. Each
+series is *prepared* once into typed arrays by `PreparedSeriesCache`
+(`prepared-series.ts`), keyed by series key: identical points reuse the entry
+untouched, an append extends it in place (probing the head and the previous tail
+so a rewritten history rebuilds instead of being silently spliced), and only an
+option change or a mismatch rebuilds. Prepared identity is the memo key
+downstream, so a re-render that changed nothing rebuilds nothing. Drawing then
+goes through an M4 pixel reduction (`transforms/`): the visible window is split
+into one bucket per screen column and at most four samples survive per column
+(first, last, min, max), so a path carries points proportional to the plot's
+*width*, not to the data — the budget the render-cost harness pins is
+≤ 5 × columns + 2 per path. Inline data identity is a content summary
+(`contentId`), not a serialisation: two identical point arrays produce the same
+key and an append produces a different one, without hashing every sample.
+Hovering a line does not re-render: Recharts forwards `data-*` onto the curve
+`<path>`, so the hovered key is written as `data-emph` straight onto the DOM and
+two rules in `public/theme/plot.css` do the emphasis/dimming — path geometry is
+untouched by a pointer move. High-frequency gestures (wheel, pinch, pan) push
+through a frame coalescer instead of calling `onViewChange` directly, capping
+view emits at one per frame, while commits (box-zoom release, double-click
+reset) flush the pending value and fire immediately.
+`plots/scalar/__tests__/scalar-render-cost.browser.ts` is the gate for the
+budgets in the scalar render-performance spec (§4): 10 series × 100 000 points
+in an 800 px host, measuring mount-to-paint, an append, one wheel step and a
+hover sweep against long-task budgets, and printing a cost attribution (the
+prepare + reduce pipeline separately from what React and Recharts spend on the
+merged rows).
+
 ## Browser host
 
 The supported browser API is `ui/src/public`:
