@@ -55,7 +55,7 @@ Binary search on the sorted x array; `null` bounds mean the data extent.
 
 `pixel-reduce.ts` (the M4 reduction)
 ```ts
-/** Reduce points[start,end) to at most 4 per pixel column over [xMin, xMax] with `columns` columns: the first, minimum, maximum and last point of each column, emitted in x order without duplicates. Points outside [lo, hi] in y are skipped (outlier bounds). NaN y is kept as a gap marker. */
+/** Reduce points[start,end) over [xMin, xMax] with `columns` columns to the first, minimum, maximum and last point of each column plus at most one gap marker (the column's first NaN y), emitted in strictly ascending index order: ≤ 5·columns + 2 indices. Points outside [lo, hi] in y are skipped and never open a column. */
 export function reduceToColumns(xs: ArrayLike<number>, ys: ArrayLike<number>, start: number, end: number, xMin: number, xMax: number, columns: number, lo?: number, hi?: number): Int32Array; // indices into xs/ys
 ```
 Returns indices so the caller can carry wall time and context of the chosen
@@ -66,7 +66,7 @@ the transform is `Math.log10` applied once per prepared series (§3.2).
 
 `percentile.ts`
 ```ts
-/** Value at percentile p (0..100) of the finite values, by quickselect on a scratch copy; O(n). */
+/** Value at percentile p (0..100) of the finite values with exactly `filterOutliers`' definition (linear interpolation on `(p/100)·(n−1)`, clamped ends), so the reducer skips the same points the filter used to drop. Sorted copy of the finite values. */
 export function percentile(values: ArrayLike<number>, p: number): number;
 ```
 
@@ -78,8 +78,8 @@ export interface PreparedSeries {
   n: number;
   xs: Float64Array;          // sorted x
   ys: Float64Array;          // smoothed y (== raw when alpha == 0)
-  rawYs: Float64Array | null; // raw y when smoothing is on
-  logXs: Float64Array | null; // log10(x) when an x log scale is requested (lazy)
+  rawYs: Float64Array | null; // raw y when smoothing is on  logXs: Float64Array | null; // log10(x), NaN for x <= 0, when an x log scale is requested (lazy)
+  logStart: number;          // index of the first positive x; log-scale windows start here
   points: SeriesPoint[];     // the input points in sorted order (wallTime/context lookup)
   xMin: number; xMax: number; yMin: number; yMax: number; // finite extents of ys
   lo: number; hi: number;    // outlier bounds from outlierPct, ±Infinity when [0,100]
@@ -99,8 +99,9 @@ else is a full rebuild. Unsorted input is sorted by x (stable) on a full
 rebuild; appends assume x-ascending tails and fall back to a rebuild otherwise.
 Outlier bounds are recomputed by `percentile` on every change when
 `outlierPct !== [0, 100]` (O(n), sub-millisecond at 10k). Smoothing follows
-`emaSmooth` semantics exactly (same alpha convention, same first value), pinned
-by a test that compares against `emaSmooth` on random input.
+`emaSmooth` literally (seed with `points[0].y`, recurrence from index 0, no
+non-finite guard), pinned by a test that compares against `emaSmooth` on random
+input.
 
 ### 3.3 `ScalarPlot` render data
 
@@ -124,14 +125,14 @@ visibility)`; hover does not enter the memo.
 
 ### 3.4 Hover without re-render
 
-Each `<Line>` gets `className="cairn-series"` and `data-series-key`. The
-hovered key is written imperatively to `data-hover` on the chart root element
-from the existing `onMouseMove` handler (no React state), and a stylesheet
-rule in the plot's CSS module applies the emphasised stroke width/opacity to
-`[data-hover="k"] .cairn-series[data-series-key="k"] path` and dims the
-others. The legend's hover uses the same attribute. The tooltip keeps its
-React state (it must render content), but its state no longer touches the
-line elements.
+Each `<Line>` gets `data-series-key` (Recharts forwards `data-*` props to the
+`<path>`; `className` would land on the wrapper `<g>`). From the existing
+`onMouseMove` handler the hovered key is applied imperatively: every
+`path[data-series-key]` under the chart root gets `data-emph` = `on`, `dim` or
+empty, and two rules in `public/theme/plot.css` set stroke width and opacity
+from that attribute. No React state is involved. Legend hover emphasis is new
+wiring through the same updater; the tooltip keeps its own React state, which
+never reached the line elements.
 
 ### 3.5 Coalesced view changes
 
@@ -146,18 +147,19 @@ it at most one per frame.
 
 `resources/resolution-cache.ts` `descriptorContentId(node)` gains an escape
 hatch: a plot definition may export `contentId(data: DataSpec): string | null`
-(new optional field on the plot definition contract in `plots/contracts.ts`).
+(new optional field on both the typed and the registered plot definition in
+`plots/contracts.ts`). The cache looks the definition up from the registry
+itself, so the key is one code path and stays identical across the
+type-registration re-render.
 The scalar definition supplies one for `kind: "inline"` data: for each series
 `key|n|x0|xn|yn` (first x, last x, last y) joined, plus the canonical JSON of
-the remaining props with `series` removed. `resolutionKey` receives the
-definition (the host already resolves it in `PlotNodeView`). Everything else
-keeps the canonical JSON path.
+the remaining props with `series` removed. Everything else keeps the canonical JSON path.
 
 ### 3.7 Consumers (cairn)
 
 - `ScalarPlotCard.tsx`: keep `mapToXAxis` (it needs run metadata) and drop
   `strideDownsample`, `emaSmooth`, `filterOutliers`; pass `smoothing` and
-  `outlierPct` as props. The `useMemo` dependency list loses nothing.
+  `outlierPct` as props; the memo's smoothing/outlier dependencies go with them.
 - `CairnPlotCard.tsx`: scalar spec `props` gain `smoothing` and `outlierPct`;
   the `series` points are passed raw.
 - Settings UI is unchanged (the same settings feed the new props).
@@ -165,8 +167,11 @@ keeps the canonical JSON path.
 ### 3.8 Backend seam
 
 `register.ts` keeps the single `scalar-react` backend. The prepared-series
-cache, window and reduction are backend-independent modules so a future
-canvas or GPU backend consumes the same `PreparedSeries`.
+cache, window and reduction are backend-independent modules so a future canvas or GPU backend consumes the same `PreparedSeries`.
+
+Gap markers: both `<Line>`s render with `connectNulls`, so a NaN point does not
+break the line today. The reducer carries the marker so a backend that wants
+gaps can honour it; no visual change is made in this version.
 
 ## 4. Budgets and testing
 
@@ -187,10 +192,11 @@ Browser harness `plots/scalar/__tests__/scalar-render-cost.browser.ts`
 | append 100 points to every series, re-render | < 30 ms long-task total |
 | one wheel zoom step | < 30 ms |
 | 20 synthetic mouse moves | no long task > 50 ms, no path `d` change |
-| path point count per series | ≤ 4 × columns + 2 |
+| path point count per series | ≤ 5 × columns + 2 |
 
-Existing tests for `emaSmooth`, `filterOutliers`, `strideDownsample` stay;
-the functions remain exported for other consumers.
+`mergeToRows` gains its first unit test (it is reused on reduced series).
+Existing tests for `emaSmooth`, `filterOutliers`, `strideDownsample` stay; the
+functions remain exported for other consumers.
 
 ## 5. Compatibility
 
