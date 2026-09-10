@@ -27,8 +27,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MutableRefObject, RefObject } from "react";
-import type { ChartViewState } from "../../../../types";
+import type { AxisScale, ChartViewState } from "../../../../types";
 import { useModifierKey } from "../../../../../host/hooks/use-modifier-key";
+import { mapDomain, panAxis, sliceAxis, unmapDomain, zoomAxis } from "../../../../chart/axis-space";
 import {
   boxZoomAxis,
   forcesTouchPan,
@@ -61,6 +62,11 @@ interface UsePlotGesturesArgs {
   plotOffsetRef: MutableRefObject<PlotOffset | null>;
   effectiveRef: MutableRefObject<{ x: [number, number]; y: [number, number] }>;
   onViewChange: (v: ChartViewState) => void;
+  /** Axis scales, read LIVE: every gesture is a screen fraction applied
+   *  through the axis mapping (see chart/axis-space.ts), so a log axis zooms /
+   *  pans in decades and never walks a bound to <= 0. */
+  xScale?: AxisScale;
+  yScale?: AxisScale;
   /** Base gesture for a plain (no-modifier) drag. `"zoom"` (the default,
    *  preserving prior behavior) box-zooms; `"pan"` pans. An Alt/Ctrl/Meta drag
    *  ALWAYS pans regardless — the modifier wins. Toolbar-driven via the scalar
@@ -73,6 +79,8 @@ export function usePlotGestures({
   plotOffsetRef,
   effectiveRef,
   onViewChange,
+  xScale = "linear",
+  yScale = "linear",
   baseDragMode = "zoom",
 }: UsePlotGesturesArgs) {
   // High-frequency gestures (wheel, pinch, pan) push through this coalescer
@@ -86,6 +94,10 @@ export function usePlotGestures({
   // callback so a toolbar toggle takes effect without re-binding handlers.
   const baseDragModeRef = useRef(baseDragMode);
   baseDragModeRef.current = baseDragMode;
+  // Read live for the same reason: flipping an axis to log mid-session must
+  // change the next gesture without re-binding the wheel listener.
+  const scalesRef = useRef({ x: xScale, y: yScale });
+  scalesRef.current = { x: xScale, y: yScale };
   // `wasDragRef` distinguishes a drag from a click so the container's onClick
   // can suppress selection when a gesture just finished.
   const wasDragRef = useRef(false);
@@ -155,16 +167,14 @@ export function usePlotGestures({
       // magnification. Delta-proportional: smooth for a pinch, ~1.1 per notch.
       const factor = 1 / wheelZoomFactor(e.deltaY);
       const { x, y } = effectiveRef.current;
+      const scales = scalesRef.current;
       const fx = (e.clientX - plotLeft) / Math.max(1, plotRight - plotLeft);
       const fy = (plotBottom - e.clientY) / Math.max(1, plotBottom - plotTop);
-      const ax = x[0] + fx * (x[1] - x[0]);
-      const ay = y[0] + fy * (y[1] - y[0]);
-      coalescer.push({
-        xMin: ax - (ax - x[0]) * factor,
-        xMax: ax + (x[1] - ax) * factor,
-        yMin: ay - (ay - y[0]) * factor,
-        yMax: ay + (y[1] - ay) * factor,
-      });
+      // The cursor pins the value under it — on a log axis that value is the
+      // one at fraction `fx` in DECADES, not in raw units.
+      const [xMin, xMax] = zoomAxis(x, fx, factor, scales.x);
+      const [yMin, yMax] = zoomAxis(y, fy, factor, scales.y);
+      coalescer.push({ xMin, xMax, yMin, yMax });
     };
     el.addEventListener("wheel", handler, { passive: false });
     return () => el.removeEventListener("wheel", handler);
@@ -250,21 +260,26 @@ export function usePlotGestures({
         const b = touchPointersRef.current.get(pinch.idB);
         if (a && b) {
           wasDragRef.current = true;
-          const next = pinchZoomDomain(
-            { xDomain: pinch.startXDomain, yDomain: pinch.startYDomain },
-            pinch.startDist,
-            pinch.startMid,
-            pointerDistance(a, b),
-            pointerMidpoint(a, b),
-            pinch.rectClient,
-            "both",
-          );
-          coalescer.push({
-            xMin: next.xDomain[0],
-            xMax: next.xDomain[1],
-            yMin: next.yDomain[0],
-            yMax: next.yDomain[1],
-          });
+          // `pinchZoomDomain` is mapped-space math (chart-view-math.ts's whole
+          // contract), so hand it mapped bounds and unmap the result — same
+          // rule as every other gesture here.
+          const scales = scalesRef.current;
+          const mx = mapDomain(pinch.startXDomain, scales.x);
+          const my = mapDomain(pinch.startYDomain, scales.y);
+          if (mx && my) {
+            const next = pinchZoomDomain(
+              { xDomain: mx, yDomain: my },
+              pinch.startDist,
+              pinch.startMid,
+              pointerDistance(a, b),
+              pointerMidpoint(a, b),
+              pinch.rectClient,
+              "both",
+            );
+            const [xMin, xMax] = unmapDomain(next.xDomain, scales.x);
+            const [yMin, yMax] = unmapDomain(next.yDomain, scales.y);
+            coalescer.push({ xMin, xMax, yMin, yMax });
+          }
         }
         return;
       }
@@ -279,16 +294,13 @@ export function usePlotGestures({
       if (s.mode === "pan") {
         const dxPx = e.clientX - s.startClientX;
         const dyPx = e.clientY - s.startClientY;
-        const [x0, x1] = s.startXDomain;
-        const [y0, y1] = s.startYDomain;
-        const dxData = (dxPx / s.plotW) * (x1 - x0);
-        const dyData = (dyPx / s.plotH) * (y1 - y0);
-        coalescer.push({
-          xMin: x0 - dxData,
-          xMax: x1 - dxData,
-          yMin: y0 + dyData,
-          yMax: y1 + dyData,
-        });
+        const scales = scalesRef.current;
+        // Drag distance is a screen FRACTION; on a log axis translating the
+        // window by it is multiplicative, so the grab point stays under the
+        // pointer and no bound can cross zero.
+        const [xMin, xMax] = panAxis(s.startXDomain, dxPx / s.plotW, scales.x);
+        const [yMin, yMax] = panAxis(s.startYDomain, -dyPx / s.plotH, scales.y);
+        coalescer.push({ xMin, xMax, yMin, yMax });
         return;
       }
       const el2 = chartBoxRef.current;
@@ -364,12 +376,17 @@ export function usePlotGestures({
           const fyHi = (plotBottom - y0c) / s.plotH;
           const [xa, xb] = s.startXDomain;
           const [ya, yb] = s.startYDomain;
+          const scales = scalesRef.current;
           // Leave the thin axis's domain untouched (1D zoom); pin it to its
-          // current extent so the other axis zooms alone.
-          const xMinNew = axis === "y" ? xa : xa + fxLo * (xb - xa);
-          const xMaxNew = axis === "y" ? xb : xa + fxHi * (xb - xa);
-          const yMinNew = axis === "x" ? ya : ya + fyLo * (yb - ya);
-          const yMaxNew = axis === "x" ? yb : ya + fyHi * (yb - ya);
+          // current extent so the other axis zooms alone. The dragged
+          // fractions map through the axis scale, so the committed window is
+          // exactly the rubber band the user drew.
+          const [xLo, xHi] = sliceAxis(s.startXDomain, fxLo, fxHi, scales.x);
+          const [yLo, yHi] = sliceAxis(s.startYDomain, fyLo, fyHi, scales.y);
+          const xMinNew = axis === "y" ? xa : xLo;
+          const xMaxNew = axis === "y" ? xb : xHi;
+          const yMinNew = axis === "x" ? ya : yLo;
+          const yMaxNew = axis === "x" ? yb : yHi;
           if (
             Number.isFinite(xMinNew) && Number.isFinite(xMaxNew) &&
             Number.isFinite(yMinNew) && Number.isFinite(yMaxNew) &&

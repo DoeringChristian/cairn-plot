@@ -578,6 +578,8 @@ function ToolbarMenu({
 interface ActionItem {
   id: string;
   icon?: string;
+  /** Short TEXT face (e.g. "log x"), rendered when `icon` is absent. */
+  label?: string;
   title: string;
   active?: boolean;
   disabled?: boolean;
@@ -1014,7 +1016,13 @@ function OverflowMenu({
                 a.active ? "text-accent" : "",
               ].join(" ")}
             >
-              {a.icon ? <Icon name={a.icon} /> : <span className="w-[13px]" />}
+              {a.icon ? (
+                <Icon name={a.icon} />
+              ) : a.label ? (
+                <span className="min-w-[13px] text-[10px] leading-none">{a.label}</span>
+              ) : (
+                <span className="w-[13px]" />
+              )}
               <span>{a.title}</span>
             </button>
           ))}
@@ -1154,11 +1162,38 @@ export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
       onClick: () => controller.reset(),
     });
 
+  // Per-axis log/linear. Present only when the renderer's controller both
+  // advertises the capability and exposes the getter/setter pair — the toolbar
+  // never shows a toggle it cannot read the current state of.
+  const scaleActions: ActionItem[] = [];
+  if (
+    caps.axisScaleToggle &&
+    controller.setAxisScale &&
+    controller.getAxisScale
+  ) {
+    const setAxisScale = controller.setAxisScale.bind(controller);
+    const getAxisScale = controller.getAxisScale.bind(controller);
+    for (const axis of ["x", "y"] as const) {
+      const id = axis === "x" ? "logX" : "logY";
+      if (!shown(id, true)) continue;
+      const isLog = getAxisScale(axis) === "log";
+      scaleActions.push({
+        id,
+        label: `${axis} log`,
+        title: isLog
+          ? `${axis.toUpperCase()} axis: log (click for linear)`
+          : `${axis.toUpperCase()} axis: linear (click for log)`,
+        active: isLog,
+        onClick: () => setAxisScale(axis, isLog ? "linear" : "log"),
+      });
+    }
+  }
+
   const exportActions: ActionItem[] = [];
   if (shown("screenshot", caps.screenshot))
     exportActions.push({ id: "screenshot", icon: "camera", title: "Download plot as PNG", onClick: doScreenshot });
 
-  const groups = [dragActions, zoomActions, viewActions, exportActions].filter((g) => g.length > 0);
+  const groups = [dragActions, zoomActions, scaleActions, viewActions, exportActions].filter((g) => g.length > 0);
   const flatActions = groups.flat();
   const leading = config?.leadingButtons ?? [];
   const sliders = config?.sliders ?? [];
@@ -1255,6 +1290,7 @@ export default function PlotToolbar({ controller, config }: PlotToolbarProps) {
               <ToolbarButton
                 key={a.id}
                 icon={a.icon}
+                label={a.label}
                 title={a.title}
                 active={a.active}
                 disabled={a.disabled}

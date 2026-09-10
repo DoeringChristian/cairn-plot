@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en" data-cairn-harness="self-driving">
+  <head>
+    <meta charset="utf-8" />
+    <title>PlotToolbar axis-scale toggle harness</title>
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
+      #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
+      #result div { white-space: pre-wrap; }
+      h2 { font-size: 13px; color: #9cf; margin: 4px 0; }
+      .host { position: relative; width: 560px; height: 60px; overflow: hidden; background: #1b1b1b; border: 1px solid #333; }
+    </style>
+  </head>
+  <body>
+    <h1>PlotToolbar — per-axis log/linear toggle</h1>
+    <div id="status">RUNNING&hellip;</div>
+    <div id="result"></div>
+    <h2>Capability + get/setAxisScale (scalar plot)</h2>
+    <div id="full" class="host group"></div>
+    <h2>Capability advertised, pair missing</h2>
+    <div id="capsonly" class="host group"></div>
+    <h2>Pair present, capability false</h2>
+    <div id="unadvertised" class="host group"></div>
+    <script type="module" src="./toolbar-axis-scale.browser.bundle.js?v=1"></script>
+  </body>
+</html>

@@ -57,6 +57,12 @@ export interface ScalarPlotProps {
   view: ChartViewState;
   onViewChange: (v: ChartViewState) => void;
   /**
+   * Accepts a per-axis scale change from the TOOLBAR's log/linear toggle. The
+   * host owns `xScale`/`yScale` (they are props), so the toggle is offered
+   * only when it can actually be honored — omit this and the toolbar hides it.
+   */
+  onScaleChange?: (axis: "x" | "y", scale: AxisScale) => void;
+  /**
    * EMA weight on the previous point (0 = off). Pass RAW series: the plot
    * smooths them itself and draws the unsmoothed values as the faint overlay.
    * Omit it entirely to keep the legacy contract — pre-smoothed `points` with
@@ -82,6 +88,7 @@ export default function ScalarPlot({
   yRange,
   view,
   onViewChange,
+  onScaleChange,
   smoothing,
   outlierPct,
   lineType = "linear",
@@ -354,6 +361,9 @@ export default function ScalarPlot({
     onViewChange,
     rootRef: chartBoxRef,
     dataBounds,
+    xScale,
+    yScale,
+    onScaleChange,
   });
 
   const {
@@ -369,6 +379,8 @@ export default function ScalarPlot({
     plotOffsetRef,
     effectiveRef,
     onViewChange,
+    xScale,
+    yScale,
     baseDragMode: controller.dragMode === "pan" ? "pan" : "zoom",
   });
 

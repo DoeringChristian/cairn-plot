@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en" data-cairn-harness="self-driving">
+  <head>
+    <meta charset="utf-8" />
+    <title>Scalar log-axis gesture harness</title>
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
+      #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
+      #result div { white-space: pre-wrap; }
+      h2 { font-size: 13px; color: #9cf; margin: 8px 0 4px; }
+      .host { width: 800px; height: 320px; background: #1b1b1b; border: 1px solid #333; }
+      /* ScalarPlot's root is height:auto; without this the ResponsiveContainer
+         measures 0 and there is no plot rect for a gesture to land in. */
+      .host > div { width: 100%; height: 100%; }
+    </style>
+  </head>
+  <body>
+    <h1>ScalarPlot — gestures on a log axis</h1>
+    <div id="status">RUNNING&hellip;</div>
+    <div id="result"></div>
+    <h2>log Y</h2>
+    <div id="log" class="host group"></div>
+    <h2>linear Y (control)</h2>
+    <div id="linear" class="host group"></div>
+    <script type="module" src="./scalar-log-gestures.browser.bundle.js?v=1"></script>
+  </body>
+</html>

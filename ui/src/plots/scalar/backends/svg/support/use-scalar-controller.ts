@@ -23,13 +23,15 @@ import { useCallback, useMemo, useState } from "react";
 import type { RefObject } from "react";
 import { plotToPng } from "../../../../../primitives/components/plot-to-png";
 import type {
+  ControllerAxis,
   ControllerCapabilities,
   DragMode,
   HoverMode,
   PlotController,
   ToPNGOptions,
 } from "../../../../../primitives/controls/types";
-import type { ChartViewState } from "../../../../types";
+import type { AxisScale as PlotAxisScale, ChartViewState } from "../../../../types";
+import { zoomAxis } from "../../../../chart/axis-space";
 
 export interface UseScalarControllerArgs {
   /** The live Scalar view (numeric bounds, or null where still auto). */
@@ -41,6 +43,15 @@ export interface UseScalarControllerArgs {
   /** The chart's full data extent, used to seed a zoom span when the view
    *  is still auto (null bounds). */
   dataBounds?: { x: [number, number]; y: [number, number] };
+  /** Current per-axis scale. The zoom buttons work in the axis's own space —
+   *  a log axis zooms by decades, exactly like the wheel and the drag do
+   *  (see chart/axis-space.ts). */
+  xScale?: PlotAxisScale;
+  yScale?: PlotAxisScale;
+  /** Present when the HOST owns the axis scales and accepts changes: the
+   *  toolbar then offers the per-axis log/linear toggle (`axisScaleToggle`).
+   *  Absent = the scales are fixed by the host and the toggle stays hidden. */
+  onScaleChange?: (axis: ControllerAxis, scale: PlotAxisScale) => void;
 }
 
 /** zoomIn shrinks the span to 80%; zoomOut grows it to 125%. */
@@ -52,6 +63,9 @@ export function useScalarController({
   onViewChange,
   rootRef,
   dataBounds,
+  xScale = "linear",
+  yScale = "linear",
+  onScaleChange,
 }: UseScalarControllerArgs): PlotController {
   // Local drag mode: "zoom" (box-zoom, the default) or "pan". Scalar has no
   // box/lasso selection, so select/lasso are ignored if ever requested.
@@ -82,18 +96,13 @@ export function useScalarController({
       ) {
         return;
       }
-      const cx = (x0 + x1) / 2;
-      const cy = (y0 + y1) / 2;
-      const hx = ((x1 - x0) * factor) / 2;
-      const hy = ((y1 - y0) * factor) / 2;
-      onViewChange({
-        xMin: cx - hx,
-        xMax: cx + hx,
-        yMin: cy - hy,
-        yMax: cy + hy,
-      });
+      // Zoom about the CENTER of the plot — screen center, which on a log
+      // axis is the geometric mean of the bounds, not the arithmetic one.
+      const [xMin, xMax] = zoomAxis([x0, x1], 0.5, factor, xScale);
+      const [yMin, yMax] = zoomAxis([y0, y1], 0.5, factor, yScale);
+      onViewChange({ xMin, xMax, yMin, yMax });
     },
-    [view, dataBounds, onViewChange],
+    [view, dataBounds, onViewChange, xScale, yScale],
   );
 
   const zoomIn = useCallback(() => zoomBy(ZOOM_IN_FACTOR), [zoomBy]);
@@ -131,6 +140,8 @@ export function useScalarController({
       autoscale: true,
       reset: true,
       screenshot: true,
+      // Offered only when the host accepts scale changes (see `onScaleChange`).
+      axisScaleToggle: !!onScaleChange,
       // Not supported by the Scalar substrate:
       select: false,
       lasso: false,
@@ -138,12 +149,20 @@ export function useScalarController({
       spikelines: false,
       hoverModes: false,
       legend: false,
-      axisScaleToggle: false,
       perAxisDrag: false,
       brush: false,
       reorder: false,
     }),
-    [],
+    [onScaleChange],
+  );
+
+  const getAxisScale = useCallback(
+    (axis: ControllerAxis): PlotAxisScale => (axis === "x" ? xScale : yScale),
+    [xScale, yScale],
+  );
+  const setAxisScale = useCallback(
+    (axis: ControllerAxis, scale: PlotAxisScale) => onScaleChange?.(axis, scale),
+    [onScaleChange],
   );
 
   return useMemo<PlotController>(
@@ -161,6 +180,7 @@ export function useScalarController({
       autoscale: home,
       reset: home,
       toPNG,
+      ...(onScaleChange ? { getAxisScale, setAxisScale } : {}),
     }),
     [
       capabilities,
@@ -175,6 +195,9 @@ export function useScalarController({
       zoomOut,
       home,
       toPNG,
+      onScaleChange,
+      getAxisScale,
+      setAxisScale,
     ],
   );
 }
