@@ -10,7 +10,7 @@
  * the shared primitive.
  *
  *   node --experimental-strip-types --test \
- *     src/primitives/components/viewport-dedup.test.ts
+ *     ui/src/primitives/components/presentation-dedup.test.ts
  *
  * Background: the caption chip was copied byte-for-byte 3× (mesh/boxes/volume)
  * and MISSING entirely from pointcloud (a user-visible gap); the three

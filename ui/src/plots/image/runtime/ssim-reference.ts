@@ -7,7 +7,7 @@
  * that library on committed fixtures (`ssim-reference.test.ts` /
  * `__fixtures__/ssim.json`) and is itself the reference of truth the GPU
  * multi-pass kernel (`ssim.wgsl.ts`) is verified against in the browser harness
- * (`engine/__tests__/ssim.browser.ts`).
+ * (`ui/src/plots/image/webgpu/__tests__/ssim.browser.ts`).
  *
  * ## Pipeline (standard SSIM, matched to skimage)
  *   1. sRGB [0,1] -> linear RGB -> Rec.709 LUMINANCE Y in [0,1] (the repo's

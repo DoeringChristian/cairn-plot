@@ -321,7 +321,7 @@ export function CompositeMediaPane({
   //
   // Stable diff-cache identity keys (a source URL / float contentKey, NOT the
   // decoded bytes) — `a` = reference, `b` = foreground, matching the pool's
-  // `ensureDiff(texA, texB)` ordering (see `renderers/image-backend.ts`).
+  // `ensureDiff(texA, texB)` ordering (see `ui/src/plots/image/runtime/contracts.ts`).
   // The panes keep no fallback menu of their own, so this path — the
   // offscreen/legacy compositor, not the host adapter — supplies the same
   // capability-derived list for whichever backend `Pane` resolved to, and

@@ -2,7 +2,7 @@
  * HDR-FLIP multi-pass diff kernel (spec addendum), per Andersson et al. 2021
  * ("Visualizing Errors in Rendered High Dynamic Range Images"). Numerically
  * mirrors the CPU reference (`hdr-flip-reference.ts`) — the two are
- * cross-verified in `engine/__tests__/hdr-flip.browser.ts` (GPU vs CPU) and the
+ * cross-verified in `ui/src/plots/image/webgpu/__tests__/hdr-flip.browser.ts` (GPU vs CPU) and the
  * CPU reference itself against the official `flip-evaluator` HDR mode
  * (`hdr-flip-reference.test.ts`).
  *

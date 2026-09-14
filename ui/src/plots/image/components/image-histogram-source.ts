@@ -1,5 +1,5 @@
 /**
- * `renderers/image-histogram-source.ts` — build the `HistogramSource` the
+ * `ui/src/plots/image/components/image-histogram-source.ts` — build the `HistogramSource` the
  * in-pane histogram overlay bins, from whatever DECODED buffer a pane already
  * holds. ONE place the "channels + raw sample accessor" mapping lives for both
  * backends' both dtypes, so `CpuImagePane` / `GpuImagePane` don't each re-derive

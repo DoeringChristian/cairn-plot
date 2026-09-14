@@ -1,6 +1,6 @@
 /**
  * THE viewport settings hook — the frame-side OWNER of a viewport's settings
- * object (final NOSTACK model; `viewport/viewport-settings.ts` carries the
+ * object (final NOSTACK model; `ui/src/state/settings/settings-channels.ts` carries the
  * types + the stateless group channels).
  *
  * THE CONTRACT (user rulings 2026-08-26): a viewport OWNS a plain
@@ -22,7 +22,7 @@
  * - No adoption effects, no stored group state, no echo guards; publish
  *   path == apply path (one `applyPatch`, used by both).
  *
- * ONE hook per viewport, run by the frame that owns it (`plot-node.tsx`'s
+ * ONE hook per viewport, run by the frame that owns it (`ui/src/host/PlotNodeView.tsx`'s
  * `PaneSelectionFrame`, the compositor; the enlarge stage owns its cells'
  * boxes ITSELF — see `plot-selection-stage.tsx`). `settings`/`set` are
  * handed DOWN to the panes as props.

@@ -217,7 +217,7 @@ export async function resolveImageData(
           source: {
             dtype: "float",
             contentKey: imageContentKey(data.hash),
-            // SELF-DESCRIBING buffer (image/pixel-buffer.ts): the runtime
+            // SELF-DESCRIBING buffer (ui/src/plots/image/runtime/pixel-buffer.ts): the runtime
             // payload's representation travels with the bytes.
             pixels: floatPixelsFrom(rt.data, rt.precision),
             shape: rt.shape,

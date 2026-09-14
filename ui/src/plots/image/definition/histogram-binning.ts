@@ -1,10 +1,10 @@
 /**
- * `image/histogram-binning.ts` — the PURE tev-parity histogram math (the port
+ * `ui/src/plots/image/definition/histogram-binning.ts` — the PURE tev-parity histogram math (the port
  * of Tom94/tev's `ImageCanvas` canvas-statistics binning.
  *
  * ONE source of truth for the value→bin mapping, bin edges, display
  * normalization and per-channel stats — used by BOTH the CPU reader loop
- * (`renderers/image-histogram.ts`) and the GPU kernels (M2), so the two paths
+ * (`ui/src/plots/image/components/image-histogram.ts`) and the GPU kernels (M2), so the two paths
  * agree bin-for-bin. DOM-free and dependency-free (Node test-runner safe).
  *
  * The tev semantics, exactly:

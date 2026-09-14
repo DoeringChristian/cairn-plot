@@ -87,7 +87,7 @@ fn sampleLUTLinear(lut: texture_2d<f32>, valueUnit: f32) -> vec3<f32> {
 }
 `;
 
-// Compare align/fit source mapping (mirrors engine/compare-align.ts). Maps a
+// Compare align/fit source mapping (mirrors ui/src/plots/image/runtime/compare-align.ts). Maps a
 // RESULT-grid pixel to a source sample so the diff compute honors the user's
 // alignment anchor / fill scaling. Requires SAMPLING_WGSL (`sampleBilinearOf`).
 //   fitFill < 0.5 (CROP): sample the INTEGER texel `resultPx + (offX,offY)`

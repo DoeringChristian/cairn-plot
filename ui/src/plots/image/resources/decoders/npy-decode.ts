@@ -1,5 +1,5 @@
 /**
- * `image/decoders/npy-decode.ts` — the `.npy` entry the decoder registry mounts.
+ * `ui/src/plots/image/resources/decoders/npy-decode.ts` — the `.npy` entry the decoder registry mounts.
  *
  * Moves the (potentially large) numpy parse + float widening OFF the main thread
  * through the shared decode pool (`decode-pool.ts` → `decode-worker.ts`), with

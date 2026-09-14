@@ -12,7 +12,7 @@ function nowMs(): number {
  * fresh on every call" semantics — no memoization, so a test can
  * navigate/reload between assertions without stale state).
  *
- * When the page URL carries `?forceEngineFail`, `engine/pool.ts`'s
+ * When the page URL carries `?forceEngineFail`, `ui/src/plots/image/webgpu/pool.ts`'s
  * `activateEntry()` device/surface acquisition throws synthetically instead
  * of touching real GPU
  * resources — deterministically exercising the C1 hard-failure path (any
@@ -21,7 +21,7 @@ function nowMs(): number {
  * to exercise the capability-gate + C1-error-boundary fallback to the
  * legacy CPU pane (see `plot-renderers.tsx`'s `resolveImageRenderer`).
  *
- * See `renderers/__tests__/engine-fallback.browser.ts` for the fault
+ * See `ui/src/testing/browser/renderers/engine-fallback.browser.ts` for the fault
  * injection + legacy-fallback assertions this hook exists for.
  */
 export function forceEngineFailRequested(): boolean {
@@ -36,7 +36,7 @@ export function forceEngineFailRequested(): boolean {
 /**
  * PER-PRESENT RENDER LOG (browser harness only) — records the GROUND-TRUTH
  * (bound source keys, content-op id, display mode) of EVERY actual GPU present
- * the pool performs (`engine/pool.ts`'s `attemptRender`/`attemptRenderDiffCached`).
+ * the pool performs (`ui/src/plots/image/webgpu/pool.ts`'s `attemptRender`/`attemptRenderDiffCached`).
  *
  * Its purpose is the present-coherency proof (the stacked-diff-flip STRESS
  * harness): under rapid image↔diff flipping a present can slip through with a

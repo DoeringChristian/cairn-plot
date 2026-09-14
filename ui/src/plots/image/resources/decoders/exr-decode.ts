@@ -1,5 +1,5 @@
 /**
- * `image/decoders/exr-decode.ts` — the EXR entry the decoder registry mounts.
+ * `ui/src/plots/image/resources/decoders/exr-decode.ts` — the EXR entry the decoder registry mounts.
  * Moves the (potentially slow) EXR decode OFF the main thread and layers a
  * clean fallback chain:
  *

@@ -6,7 +6,7 @@
  * printing three channel-tinted numbers (the reported bug) is wrong.
  *
  *   node --experimental-strip-types --test \
- *     src/plots/image/model/image-operation-output.test.ts
+ *     ui/src/plots/image/definition/image-operation-output.test.ts
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

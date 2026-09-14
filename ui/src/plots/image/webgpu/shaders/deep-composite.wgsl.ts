@@ -1,5 +1,5 @@
 /**
- * `engine/shaders/deep-composite.wgsl.ts` — the GPU DEEP-EXR depth composite.
+ * `ui/src/plots/image/webgpu/shaders/deep-composite.wgsl.ts` — the GPU DEEP-EXR depth composite.
  *
  * A fullscreen FRAGMENT pass that composites one deep pixel per fragment: it
  * walks that pixel's Z-sorted samples and OVER-accumulates (premultiplied
@@ -25,7 +25,7 @@
  *   params:  vec4<f32>        (width, height, zClip, unused)
  *
  * Bindings are a fixed, hand-authored layout (a DEDICATED pipeline in
- * `webgpu/device.ts`, like the reduce pass) — NOT the generic
+ * `ui/src/plots/image/webgpu/device/device.ts`, like the reduce pass) — NOT the generic
  * `parseWGSLBindings` scheme, which only knows uniform/texture/sampler.
  *
  * ## Orientation

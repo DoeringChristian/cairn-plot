@@ -1,6 +1,6 @@
 /**
  * HDR-activation proof harness (WebGPU engine, Sub-project 1 — "close the
- * last gap" task). Proves `engine/image-engine.ts`'s `renderImage()` HDR-out
+ * last gap" task). Proves `ui/src/plots/image/webgpu/image-engine.ts`'s `renderImage()` HDR-out
  * path ACTUALLY preserves values above 1.0 to a real HDR (`rgba16float`)
  * target, and that the ordinary SDR path still clamps/tonemaps into `[0,1]`
  * exactly as before — the objective, backend-verifiable half of "HDR output
@@ -19,8 +19,8 @@
  * never exercises a value SURVIVING past 1.0; `hdrOut:true` there only proves
  * the output-ENCODE stage is skipped, not that HDR range is preserved. This
  * harness renders the SAME hdrOut:true path with `operator: "linear"` (the
- * pure-identity operator `renderers/GpuImagePane.tsx`'s `useHdr` branch
- * actually selects — see `image/tonemap.ts`'s doc comment on that entry) and
+ * pure-identity operator `ui/src/plots/image/webgpu/view.tsx`'s `useHdr` branch
+ * actually selects — see `ui/src/plots/image/runtime/tonemap.ts`'s doc comment on that entry) and
  * asserts a pixel that started at 4.0 comes back >1.0, unclamped.
  *
  * CASES:

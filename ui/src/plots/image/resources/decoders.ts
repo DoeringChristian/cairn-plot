@@ -1,5 +1,5 @@
 /**
- * `image/decoders.ts` — the multi-format image DECODER layer.
+ * `ui/src/plots/image/resources/decoders.ts` — the multi-format image DECODER layer.
  *
  * Decoders sit UPSTREAM of the render backends and are ORTHOGONAL to display:
  * a small registry normalizes any source (a `url` or raw `bytes` plus an

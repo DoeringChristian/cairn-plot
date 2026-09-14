@@ -19,7 +19,7 @@
  *
  * This is the FIRST of the two-sided FLIP verification (spec §FLIP): here the
  * CPU reference is checked against the official values; the browser harness
- * (`engine/__tests__/flip.browser.ts`) checks the GPU kernel against this CPU
+ * (`ui/src/plots/image/webgpu/__tests__/flip.browser.ts`) checks the GPU kernel against this CPU
  * reference.
  */
 import { test } from "node:test";

@@ -1,5 +1,5 @@
 /**
- * `image/decoders/exr-full.ts` — the FULL-coverage EXR decode, adapting the
+ * `ui/src/plots/image/resources/decoders/exr-full.ts` — the FULL-coverage EXR decode, adapting the
  * vendored three.js `EXRLoader` (see `vendor/PROVENANCE.md`) to cairn-plot's
  * canonical {@link DecodedImage}. This is the real decode logic; it runs both
  * inside the decode worker (`decode-worker.ts`, the normal browser path) and directly

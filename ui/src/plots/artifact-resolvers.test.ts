@@ -49,7 +49,7 @@ test("createEndpointDataSource uses the host fetch implementation", async () => 
 
 // ---------------------------------------------------------------------------
 // A minimal `.npy` v1.0 encoder (float32) for building test buffers, mirroring
-// `image/decoders.test.ts`'s `makeNpy`.
+// `ui/src/plots/image/resources/decoders.test.ts`'s `makeNpy`.
 // ---------------------------------------------------------------------------
 function makeF32Npy(shape: number[], values: number[]): ArrayBuffer {
   const descr = "<f4";

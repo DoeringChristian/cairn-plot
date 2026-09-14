@@ -4,25 +4,25 @@
  * (Tasks 1-4). `renderImage(device, target, src, params)` runs a fullscreen
  * fragment pipeline that turns a float/8-bit image texture into displayed
  * pixels via `exposure -> [colormap] -> tone-map operator -> output-encode`,
- * PARITY-CRITICAL with the CPU pipeline in `image/tonemap.ts` (see
- * `engine/shaders/image.wgsl.ts`'s module doc comment for the shader-level
+ * PARITY-CRITICAL with the CPU pipeline in `ui/src/plots/image/runtime/tonemap.ts` (see
+ * `ui/src/plots/image/webgpu/shaders/image.wgsl.ts`'s module doc comment for the shader-level
  * porting notes and the exact uniform layout).
  *
- * ## Pipeline (matches image/tonemap.ts's HDR-A pipeline, module doc comment)
+ * ## Pipeline (matches ui/src/plots/image/runtime/tonemap.ts's HDR-A pipeline, module doc comment)
  *   1. sample `src` at the `params.uv` window (zoom/pan rect, [0,1] source-space)
  *   2. exposure:  rgb *= 2^exposureEV                     (applyExposure)
  *   3. [scalar]:  rgb = colormapLUT(rgb.r)                 (GPU-only stage;
  *      no existing CPU renderer applies a colormap at this pipeline point —
  *      see image.wgsl.ts's doc comment)
  *   4. display operation: map the selected channels to display-linear RGB;
- *      see `image/tonemap.ts`'s doc comment on that entry — so values above
+ *      see `ui/src/plots/image/runtime/tonemap.ts`'s doc comment on that entry — so values above
  *      1.0 survive this stage on purpose when paired with `hdrOut:true` and
  *      a real HDR (`rgba16float`/`toneMapping:'extended'`) target.)
  *   5. encode:    out = hdrOut ? extendedOutputEncode(rgb, gamma)
  *                              : outputEncode(rgb, gamma)
  *      (the hdrOut branch runs the EXTENDED, unclamped transfer encode — a
  *      float16 srgb/display-p3 canvas stores NON-LINEAR signals per W3C
- *      ColorWeb-CG. See image/tonemap.ts's extendedOutputEncode.)
+ *      ColorWeb-CG. See ui/src/plots/image/runtime/tonemap.ts's extendedOutputEncode.)
  *
  * ## Not wired into any renderer/bundle entry point yet
  * Per the Task 5 brief: this module (and its shaders) may be imported by a
@@ -122,7 +122,7 @@ export interface ImageParams {
    *  OETF / power curve) and write the transfer-encoded float to `target` — the
    *  hdrOut / extended-surface path. (Formerly this SKIPPED the encode and wrote
    *  raw scene-linear; per W3C ColorWeb-CG a float16 srgb/display-p3 canvas
-   *  stores non-linear signals, so the encode is required. See image/tonemap.ts's
+   *  stores non-linear signals, so the encode is required. See ui/src/plots/image/runtime/tonemap.ts's
    *  extendedOutputEncode doc block.) */
   hdrOut: boolean;
   /** When true, sRGB-DECODE the sampled source to linear BEFORE exposure — an
@@ -182,7 +182,7 @@ export interface ImageParams {
    * DISPLAY-space post-processing (the 8-bit `ImageProcessing` block's
    * brightness/contrast/flipSign) — applied as a FINAL affine in the ENCODED
    * (display) color space AFTER the output-encode, the numeric mirror of the CPU
-   * SDR pane's CSS `filter` (`applyDisplayAdjust1` in image/tonemap.ts). Packed
+   * SDR pane's CSS `filter` (`applyDisplayAdjust1` in ui/src/plots/image/runtime/tonemap.ts). Packed
    * into u_bind14 as [brightness, contrast, flipSign?1:0, 0]. All unset/omitted →
    * the zero-filled identity (bit-for-bit the pre-processing path). exposure/offset
    * are NOT here — those are scene-linear (exposureEV/offset). Unset = identity. */
@@ -240,13 +240,13 @@ function targetFormatOf(target: Surface | Texture): TextureFormat {
  * Builds the `t_bind1` colormap-LUT texture for this call. When
  * `params.colormap` is absent (non-scalar path), a 1x1 placeholder is still
  * created — WebGPU's `GPUBindGroupLayout` requires EVERY declared texture
- * binding to have a bound resource (see `webgpu/device.ts`'s
+ * binding to have a bound resource (see `ui/src/plots/image/webgpu/device/device.ts`'s
  * `createBindGroup` doc note), and the shader never reads it unless
  * `isScalar` is set, so its contents are irrelevant in that case.
  *
  * When a `colormap` IS provided it must be EXACTLY `256*4` floats (a 256x4
  * RGBA-float LUT, per `ImageParams.colormap`'s doc comment) — the shader's
- * LUT index is clamped to `[0, 255]` (see `image.wgsl.ts`/`image.glsl.ts`),
+ * LUT index is clamped to `[0, 255]` (see `image.wgsl.ts`/`ui/src/plots/image/webgpu/shaders/image.wgsl.ts`),
  * so a shorter/longer/mis-shaped array would either silently truncate (data
  * loss, no error) or leave the tail out of range; both are caller bugs
  * that are cheap to catch here instead of surfacing as a subtly-wrong
@@ -328,11 +328,11 @@ export function renderImage(device: Device, target: Surface | Texture, src: Text
   const lut = retainedColormapTexture(device, params.isScalar ? params.colormap : undefined);
 
   const gamma = typeof params.gamma === "number" && params.gamma > 0 ? params.gamma : 0;
-  // Field order MUST match image.wgsl.ts / image.glsl.ts's u_bind2/u_bind3/u_bind4 doc comments.
+  // Field order MUST match image.wgsl.ts / ui/src/plots/image/webgpu/shaders/image.wgsl.ts's u_bind2/u_bind3/u_bind4 doc comments.
   const paramsVec = new Float32Array([params.exposureEV, 0, gamma, params.isScalar ? 1 : 0]);
   const uvRect = new Float32Array([params.uv.x, params.uv.y, params.uv.w, params.uv.h]);
   const hdrFlag = new Float32Array([params.hdrOut ? 1 : 0]);
-  // Field order MUST match image.wgsl.ts / image.glsl.ts's u_bind5 doc
+  // Field order MUST match image.wgsl.ts / ui/src/plots/image/webgpu/shaders/image.wgsl.ts's u_bind5 doc
   // comment. Default "linear" when unset — see ImageParams.filter's doc.
   const filterFlag = new Float32Array([params.filter === "nearest" ? 0 : 1]);
   // u_bind6 = TEV display offset (default 0 = identity).

@@ -1,5 +1,5 @@
 /**
- * `renderers/gpu-image-samplers.ts` — the TEV per-pixel value samplers for
+ * `ui/src/plots/image/webgpu/pixel-samplers.ts` — the TEV per-pixel value samplers for
  * `GpuImagePane`.
  *
  * The pane retains the CPU-side source buffers the on-hover pixel-value overlay
@@ -71,7 +71,7 @@ export interface PixelSamplers {
 
 // Per-sample reads go through the SELF-DESCRIBING buffer's hoisted reader
 // (`floatPixelReader`) — the representation travels with the bytes, so these
-// samplers can never misread bit patterns (image/pixel-buffer.ts).
+// samplers can never misread bit patterns (ui/src/plots/image/runtime/pixel-buffer.ts).
 
 export function usePixelSamplers(inp: PixelSamplerInputs): PixelSamplers {
   const {

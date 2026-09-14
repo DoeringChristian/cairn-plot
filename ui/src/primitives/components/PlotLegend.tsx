@@ -1,5 +1,5 @@
 /**
- * `primitives/PlotLegend.tsx` — the shared interactive legend for cairn-plot's
+ * `ui/src/primitives/components/PlotLegend.tsx` — the shared interactive legend for cairn-plot's
  * multi-series charts (S6, Plotly legend parity).
  *
  * A row of swatch+label chips. Single-click toggles a series' visibility,

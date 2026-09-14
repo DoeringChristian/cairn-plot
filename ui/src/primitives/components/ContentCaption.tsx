@@ -20,7 +20,7 @@
 
 /** The exact class contract for the metadata caption — top-left, gray,
  *  monospace, pointer-transparent. Exported so the contract can be asserted
- *  without a DOM (see `viewport-dedup.test.ts`) and so it is the ONE source of
+ *  without a DOM (see `ui/src/primitives/components/presentation-dedup.test.ts`) and so it is the ONE source of
  *  truth for styling+position. */
 export const VIEWPORT_CAPTION_CLASS =
   "pointer-events-none absolute left-1 top-1 z-10 mono rounded bg-bg/80 px-1 py-0.5 text-[10px] text-fg-subtle backdrop-blur-sm";

@@ -1,5 +1,5 @@
 /**
- * `image/half.ts` — shared IEEE-754 binary16 (half-precision) helpers for the
+ * `ui/src/plots/image/runtime/half.ts` — shared IEEE-754 binary16 (half-precision) helpers for the
  * F16 END-TO-END pipeline.
  *
  * ## Why keep half bits at all

@@ -3,7 +3,7 @@
  *
  * Two ways in:
  *  - the CORE inline bundle installs `window.cairnPlot` (see
- *    `plot-bootstrap.tsx` → `installCairnPlotApi`), the primary HTML path;
+ *    `ui/src/host/bootstrap.tsx` → `installCairnPlotApi`), the primary HTML path;
  *  - ESM consumers `import { cairnPlot } from "…/builder"` — the default
  *    namespace here, bound to the CORE-installed mount runtime at call time.
  *

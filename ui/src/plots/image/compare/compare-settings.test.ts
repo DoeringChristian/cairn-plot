@@ -1,6 +1,6 @@
 /**
  * Compare-settings enumeration + option-list contract (the pure half absorbed
- * from `card-kit/CompareSettingsPanel.tsx` + `visual-compare-settings.ts`).
+ * from `card-kit/CompareSettingsPanel.tsx` + `ui/src/plots/image/compare/compare-settings.ts`).
  *
  *   node --experimental-strip-types --test \
  *     src/plots/image/compare/compare-settings.test.ts

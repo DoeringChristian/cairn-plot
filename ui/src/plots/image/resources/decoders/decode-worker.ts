@@ -1,5 +1,5 @@
 /**
- * `image/decoders/decode-worker.ts` — the ONE Web Worker entry behind the decode
+ * `ui/src/plots/image/resources/decoders/decode-worker.ts` — the ONE Web Worker entry behind the decode
  * pool. It runs the vendored EXR decoder AND the `.npy` → image map OFF the main
  * thread. Imported (once, lazily) by the pool shell (`decode-pool.ts`) via Vite's
  * `?worker&inline` so the whole worker module graph (this file + `exr-full.ts` +

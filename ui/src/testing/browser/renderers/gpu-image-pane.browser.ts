@@ -13,10 +13,10 @@
  *   2. Readback (via `createImageBitmap` + an offscreen 2D canvas — NOT
  *      `canvas.getContext("2d")` on the pane's own canvas, which already owns
  *      a webgpu context) checked structurally (canvas non-blank); a
- *      pixel-exact comparison against `image/tonemap.ts` is NOT asserted here
+ *      pixel-exact comparison against `ui/src/plots/image/runtime/tonemap.ts` is NOT asserted here
  *      since canvas-compositing color management can introduce small
  *      non-deterministic differences (the byte-exact parity checks live in
- *      `engine/__tests__/image-pass.browser.ts`, which reads back an
+ *      `ui/src/plots/image/webgpu/__tests__/image-pass.browser.ts`, which reads back an
  *      offscreen texture directly, bypassing canvas compositing).
  *   3. Alt+wheel changes the viewport (zoom != 1); a plain wheel (no Alt)
  *      leaves it unchanged (the `useModifierKey` Alt-gate — plain wheel must
@@ -24,7 +24,7 @@
  *   4. Double-click resets the viewport to `{zoom:1, pan:{x:0,y:0}}` (Q17).
  *   5. Mounting ~30 panes: every INTERSECTING pane is live, and the total
  *      never exceeds max(`MAX_LIVE_SWAPCHAINS`, visible count) — the cap
- *      bounds OFF-SCREEN panes only (`engine/pool.ts` `canAdmit`).
+ *      bounds OFF-SCREEN panes only (`ui/src/plots/image/webgpu/pool.ts` `canAdmit`).
  *   5b. Visible panes are never cap-parked: mount MORE on-screen panes than
  *      `MAX_LIVE_SWAPCHAINS`; all of them must hold a live surface, and a
  *      source change on the last one must commit a new frame (a cap-parked

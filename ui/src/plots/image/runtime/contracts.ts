@@ -33,7 +33,7 @@ import type {
 export interface FloatImageData {
   /**
    * Flattened samples in row-major order — a SELF-DESCRIBING buffer whose
-   * representation travels WITH the bytes (`image/pixel-buffer.ts`, user
+   * representation travels WITH the bytes (`ui/src/plots/image/runtime/pixel-buffer.ts`, user
    * ruling 2026-08-25): `"values"` (f32/f64, read directly) or `"f16-bits"`
    * (raw binary16 bit patterns, the F16 pipeline — kept half through to an
    * `rgba16float` upload). Read via the pixel-buffer accessors; the
@@ -48,7 +48,7 @@ export interface FloatImageData {
    * Present ONLY for a DEEP EXR opened with live-flatten (the depth slider).
    * `pixels` above is the FULL composite; the controller re-flattens live at a
    * Z cutoff. The consuming pane MUST `dispose()` it on unmount. See
-   * `../image/decoders.ts` and `./use-deep-flatten.ts`.
+   * `ui/src/plots/image/resources/decoders.ts` and `./use-deep-flatten.ts`.
    */
   deep?: import("../resources/decoders.ts").DeepFlattenController;
 }
@@ -73,7 +73,7 @@ export interface FloatSurfaceProps {
   /** Default PEAK ceiling `P` (×SDR white) — the UNIFIED HDR mode: every operator
    *  clips at `P` (SDR = `P=1`, `P>1` extends onto an HDR surface, `P=∞`/`Infinity`
    *  = raw browser-clipped). Seeds the pane's PEAK slider; unset → the pane default
-   *  (4 on an engaged HDR surface). See `image/tonemap.ts`'s `resolveRenderTonemap`. */
+   *  (4 on an engaged HDR surface). See `ui/src/plots/image/runtime/tonemap.ts`'s `resolveRenderTonemap`. */
   peak?: number;
   /** Optional authored false-color LUT for the FLOAT surface.
    *  The unified float pipeline runs a named colormap through the GPU/CPU LUT
@@ -111,7 +111,7 @@ export interface FloatSurfaceProps {
   /** Multi-viewport SELECTION settings-sync group (see {@link ImageBackendInput}).
    *  Threaded through `useImageSurfaceProps` so the pane body reads it here. */
   /** CHANNELS toolbar menu (EXR part/layer selection) — a pre-built standard
-   *  `ToolbarButtonSpec` dropdown supplied by the OWNER (`LeafView`, which holds
+   *  `ToolbarButtonSpec` dropdown supplied by the OWNER (`GenericLeafView`, which holds
    *  the selection state and re-decodes on pick). The pane just renders it at
    *  the leading edge next to its own menus, folds `channelModified` into HOME's
    *  modified state, and calls `onChannelReset` from its reset handler. */
@@ -151,7 +151,7 @@ export interface Uint8SurfaceProps {
    *  HDR mode (§B), identical to {@link FloatSurfaceProps.peak}: every operator clips
    *  at `P` (SDR = `P=1`, `P>1` extends onto an HDR surface). Seeds the pane's PEAK
    *  slider (shown only when the extended surface engages); unset → the pane
-   *  default (4). See `image/tonemap.ts`'s `resolveRenderTonemap`. */
+   *  default (4). See `ui/src/plots/image/runtime/tonemap.ts`'s `resolveRenderTonemap`. */
   peak?: number;
   /** Base exposure in EV stops. Both backends sRGB-decode to scene-linear and
    *  apply `color * 2^EV` before display encoding; the CPU backend switches from
@@ -178,7 +178,7 @@ export interface Uint8SurfaceProps {
   /** Multi-viewport SELECTION settings-sync group (see {@link ImageBackendInput}).
    *  Threaded through `useImageSurfaceProps` so the pane body reads it here. */
   /** CHANNELS toolbar menu (EXR part/layer selection) — a pre-built standard
-   *  `ToolbarButtonSpec` dropdown supplied by the OWNER (`LeafView`, which holds
+   *  `ToolbarButtonSpec` dropdown supplied by the OWNER (`GenericLeafView`, which holds
    *  the selection state and re-decodes on pick). The pane just renders it at
    *  the leading edge next to its own menus, folds `channelModified` into HOME's
    *  modified state, and calls `onChannelReset` from its reset handler. */
@@ -344,7 +344,7 @@ export interface ImageBackendInput {
    *  defaults from its current rendering mode or source. */
   resetSettings?: () => void;
   /** CONTROLLED single-pane fullscreen state, owned by the plot leaf ABOVE the
-   *  async-resolve swap (`LeafView`) so a cold re-resolve (a channel pick's
+   *  async-resolve swap (`GenericLeafView`) so a cold re-resolve (a channel pick's
    *  "Loading…" placeholder unmounting this pane) cannot reset it. Threaded to
    *  `ImagePaneShell.enlargeControl`; absent = shell-local state. */
   enlargeControl?: { enlarged: boolean; setEnlarged: (v: boolean) => void };
@@ -375,9 +375,9 @@ export interface ImageBackendInput {
   pixelValueNotation?: PixelValueNotation;
   /** Host seam — hide the `PlotToolbar` when `false` (default `true`). */
   toolbar?: boolean;
-  // — multi-viewport SELECTION settings sync (viewport/viewport-settings.ts) —
+  // — multi-viewport SELECTION settings sync (ui/src/state/settings/settings-channels.ts) —
   /** CHANNELS toolbar menu (EXR part/layer selection) — a pre-built standard
-   *  `ToolbarButtonSpec` dropdown supplied by the OWNER (`LeafView`, which holds
+   *  `ToolbarButtonSpec` dropdown supplied by the OWNER (`GenericLeafView`, which holds
    *  the selection state and re-decodes on pick). The pane just renders it at
    *  the leading edge next to its own menus, folds `channelModified` into HOME's
    *  modified state, and calls `onChannelReset` from its reset handler. */
@@ -387,7 +387,7 @@ export interface ImageBackendInput {
   /** Clear the channel override back to the authored selection (HOME/dbl-click). */
   onChannelReset?: () => void;
   /** True when this pane is the ONE reused renderer of a STACKED viewport (set by
-   *  `LeafView` from the CORE-side `InStackedGridContext`). A stack owns ONE SHARED
+   *  `GenericLeafView` from the CORE-side `InStackedGridContext`). A stack owns ONE SHARED
    *  display-settings object: every slot renders under the stack's current
    *  encoding/colormap, a pick applies to all slots + survives flips, each image's
    *  authored props are SEEDS only, HOME adopts the focused slot's defaults, and

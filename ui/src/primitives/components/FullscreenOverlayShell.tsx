@@ -4,7 +4,7 @@
  * elevated frame + ✕ + Escape + backdrop-click + page-scroll-lock + themed
  * portal, so the two overlays that need it do not each hand-roll it:
  *
- *   - the per-pane ENLARGE (`renderers/ImagePaneShell.tsx`) — one pane promoted
+ *   - the per-pane ENLARGE (`ui/src/plots/image/components/ImagePaneShell.tsx`) — one pane promoted
  *     to fullscreen (its `<canvas>` reparented into the frame);
  *   - the page-level SELECTION STAGE (`src/plot-selection-stage.tsx`) — a GRID of the
  *     selected panes (enlarge) or of comparison panes (compare).

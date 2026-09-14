@@ -38,7 +38,7 @@
  * If `navigator.gpu` is absent (an automation browser without WebGPU), the
  * whole harness SKIPS gracefully (reported, not a failure) — there is no
  * fallback backend in the engine to fall back to inside this harness (see
- * `engine/device.ts`'s module doc; the CPU-pane fallback lives at the
+ * `ui/src/plots/image/webgpu/device/device.ts`'s module doc; the CPU-pane fallback lives at the
  * `resolveImageRenderer` seam, not here).
  *
  * RUNNING:
@@ -232,7 +232,7 @@ async function runUniformSamplerTest(device: Device, label: string): Promise<Tes
 
 /**
  * Regression test for the fixed "SDR surface readback swaps R/B" bug
- * (`engine/webgpu/device.ts`'s `readback()`). Renders a distinctive
+ * (`ui/src/plots/image/webgpu/device/device.ts`'s `readback()`). Renders a distinctive
  * `R != G != B` color to a REAL `Surface` (not an offscreen `Texture`,
  * unlike every other case in this file — a surface is the only target whose
  * native GPU format can legitimately differ from the `TextureFormat`
@@ -290,7 +290,7 @@ async function runSurfaceChannelOrderTest(device: Device, label: string): Promis
 
 /**
  * Regression test for the fixed "unbounded per-`createBindGroup()` GPU
- * buffer allocation" bug (`engine/webgpu/device.ts`'s `WGPUBindGroup`).
+ * buffer allocation" bug (`ui/src/plots/image/webgpu/device/device.ts`'s `WGPUBindGroup`).
  * Creates many bind groups against the same pipeline (mimicking a per-frame
  * render loop rebuilding its bind group every frame) and `destroy?.()`s
  * each one — including a deliberate DOUBLE `destroy?.()` per bind group, to
@@ -338,7 +338,7 @@ async function runBindGroupLifecycleTest(device: Device, label: string): Promise
  * Sub-cases, run in order and each attributed BY NAME. Two failure modes are
  * distinguished:
  *   - A `DeviceLostError` (the engine's typed device-loss signal — see
- *     `webgpu/device.ts`) thrown from a sub-case's `readback()` is a
+ *     `ui/src/plots/image/webgpu/device/device.ts`) thrown from a sub-case's `readback()` is a
  *     backend-teardown artifact (the software SwiftShader/Dawn adapter losing
  *     the device/instance mid-map — NOT a WGSL↔TS parity defect), so it is a
  *     LOUD, per-sub-case SKIP, not a FAIL: the same category as the whole-page

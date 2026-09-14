@@ -19,7 +19,7 @@ export type PanePlaceholderVariant = "empty" | "loading" | "error";
 const BASE = "flex h-full w-full items-center justify-center";
 
 /** The exact class contract per variant. Exported so the contract can be
- *  asserted without a DOM (see `viewport-dedup.test.ts`) and so it is the ONE
+ *  asserted without a DOM (see `ui/src/primitives/components/presentation-dedup.test.ts`) and so it is the ONE
  *  source of truth for the placeholder styling. */
 export const PANE_PLACEHOLDER_CLASS: Record<PanePlaceholderVariant, string> = {
   empty: `${BASE} text-sm text-fg-muted`,

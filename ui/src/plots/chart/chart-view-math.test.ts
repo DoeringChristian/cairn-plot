@@ -4,7 +4,7 @@
  * with TypeScript type-stripping:
  *
  *   node --experimental-strip-types --test \
- *     src/lib/cairn-plot/viewport/chart-view-math.test.ts
+ *     ui/src/plots/chart/chart-view-math.test.ts
  *
  * These functions are DOM-free pure math, so this is sufficient coverage.
  */

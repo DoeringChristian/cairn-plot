@@ -1,6 +1,6 @@
 /**
  * Unit tests for the PURE histogram binning / grouping core
- * (`renderers/image-histogram.ts`) that the in-pane histogram overlay delegates
+ * (`ui/src/plots/image/components/image-histogram.ts`) that the in-pane histogram overlay delegates
  * to. Runs under Node's type-stripping test runner (no DOM).
  */
 import { test } from "node:test";

@@ -7,7 +7,7 @@
  *   - per-channel STATS row (min / mean / max — tev's footer numbers);
  *   - the VALUE HISTOGRAM: tev-parity binning (400 bins, symmetric-log₂ axis
  *     over the data's min→max, density + percentile-cap normalization) via the
- *     pure `renderers/image-histogram.ts` → `image/histogram-binning.ts` core;
+ *     pure `ui/src/plots/image/components/image-histogram.ts` → `ui/src/plots/image/definition/histogram-binning.ts` core;
  *   - the per-pixel-under-cursor read-out;
  *   - DEEP-Z: the cursor pixel's samples (value + depth Z), front → back.
  *   (M2 adds the alpha-weighted DEPTH histogram section for deep sources.)

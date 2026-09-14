@@ -8,7 +8,7 @@
  * group bus." Concretely:
  * - Each VIEWPORT OWNS a plain {@link PlotSettings} object, held in a
  *   box (`useRef`) by the frame that renders it (`useCellSettings` in
- *   renderers/use-cell-settings.ts). Patches REPLACE the object
+ *   ui/src/state/settings/use-cell-settings.ts). Patches REPLACE the object
  *   (`{...prev, ...patch}`) so identity checks stay valid. Nothing global
  *   stores settings — no registry, no ids, no leaked rows: the object dies
  *   with its viewport.
@@ -49,7 +49,7 @@ import type { PlotSettingKey, PlotSettings } from "../../settings/schema.ts";
  *     `use-chart-view.ts` projects the frame-owned settings object, the
  *     image pattern exactly.
  *   - `scene3d.*` — 3D camera pose, NATIVE: each 3D viewer owns a settings
- *     object and joins its group as a peer (`three/camera-settings.ts`);
+ *     object and joins its group as a peer (`ui/src/plots/three/runtime/camera-settings.ts`);
  *     late-join converges by PEER DEREF (`settings-peers.ts`), the frame
  *     registry's twin for frameless cells.
  *

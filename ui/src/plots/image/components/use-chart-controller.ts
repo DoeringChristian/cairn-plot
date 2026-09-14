@@ -1,5 +1,5 @@
 /**
- * `renderers/use-chart-controller.ts` — the SVG-chart adapter that projects a
+ * `ui/src/plots/image/components/use-chart-controller.ts` — the SVG-chart adapter that projects a
  * `useChartView` return value onto the renderer-agnostic {@link PlotController}
  * facade the `<PlotToolbar>` (S1) drives. One per chart instance
  * (Scatter/Histogram/Bar/Heatmap). ScalarPlot and ParallelCoords get their own

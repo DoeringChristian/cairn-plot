@@ -23,7 +23,7 @@
  * "sRGB" and "gamma" are output *transfer functions*, so every operator curve
  * (linear/reinhard/aces/…) can pair with any output encode; and exposure is a
  * scene-linear affine shared by all curves. The WebGPU engine
- * (`engine/shaders/image.wgsl.ts`) ports these same stages to the fragment shader.
+ * (`ui/src/plots/image/webgpu/shaders/image.wgsl.ts`) ports these same stages to the fragment shader.
  */
 
 import { clamp01 } from "../../../primitives/util/clamp.ts";
@@ -129,7 +129,7 @@ export function applyExposure(v: number, ev: number): number {
  * the identity (`ev=0, offset=0` → `v`), so the display adjustment sliders leave
  * an image bit-for-bit unchanged at rest. This is the single source of truth the
  * CPU panes call; the WebGPU shaders port the same `v * exp2(ev) + offset` line
- * (see `engine/shaders/image.wgsl.ts` / `engine/kernels/prelude.wgsl.ts`). */
+ * (see `ui/src/plots/image/webgpu/shaders/image.wgsl.ts` / `ui/src/plots/image/webgpu/kernels/prelude.wgsl.ts`). */
 export function applyExposureOffset(v: number, ev: number, offset: number): number {
   return v * 2 ** ev + offset;
 }
@@ -185,7 +185,7 @@ export function outputEncode(x: number, gamma?: number): number {
 // most machines (audit H1). This is the ONE numeric definition of that CSS math,
 // applied as a FINAL display-space stage AFTER the output-encode — used by the
 // engine parity harness as the CPU source of truth and ported BYTE-IDENTICALLY
-// into `engine/shaders/image.wgsl.ts` (`cairnDisplayAdjust`) so one knob resolves
+// into `ui/src/plots/image/webgpu/shaders/image.wgsl.ts` (`cairnDisplayAdjust`) so one knob resolves
 // to the same pixels on the CPU (CSS) and GPU (shader) backends.
 //
 // The CSS functions are LINEAR affines in the element's (encoded) color space,
@@ -237,7 +237,7 @@ export function applyDisplayAdjust(rgb: RgbTriple, a: DisplayAdjust): RgbTriple 
 //
 // WHY THIS EXISTS. When a pane engages its true-HDR surface (`hdrOut:true` —
 // `rgba16float` canvas, `toneMapping:'extended'`, colorSpace `srgb`/`display-p3`
-// — see `engine/webgpu/surface.ts`'s `configureHDRSurface` + `GpuImagePane`'s
+// — see `ui/src/engines/webgpu/surface.ts`'s `configureHDRSurface` + `GpuImagePane`'s
 // `useHdr`), the shader used to SKIP the output-encode and write RAW
 // SCENE-LINEAR values to the canvas. That is WRONG. Per the W3C ColorWeb-CG
 // specs (`hdr_html_canvas_element` + `canvas-color-space`), a float16 canvas in
@@ -253,9 +253,9 @@ export function applyDisplayAdjust(rgb: RgbTriple, a: DisplayAdjust): RgbTriple 
 //     valid for `x > 1` (the extended-sRGB regime), and
 //   - MIRROR through the origin for negatives — `sign(x)·f(|x|)` — per the
 //     extended-sRGB (scRGB / bt.2100-adjacent) convention.
-// Ported BYTE-IDENTICALLY into `engine/shaders/image.wgsl.ts`
+// Ported BYTE-IDENTICALLY into `ui/src/plots/image/webgpu/shaders/image.wgsl.ts`
 // (`extendedSrgbOetf` / `extendedGammaEncode` / `extendedOutputEncodeF`); the
-// GPU↔TS parity harness (`engine/__tests__/hdr-output.browser.ts`) checks them.
+// GPU↔TS parity harness (`ui/src/plots/image/webgpu/__tests__/hdr-output.browser.ts`) checks them.
 // ---------------------------------------------------------------------------
 
 /**

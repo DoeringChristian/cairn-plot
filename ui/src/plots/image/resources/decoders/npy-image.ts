@@ -1,5 +1,5 @@
 /**
- * `image/decoders/npy-image.ts` — the pure `.npy` → {@link DecodedImage} map.
+ * `ui/src/plots/image/resources/decoders/npy-image.ts` — the pure `.npy` → {@link DecodedImage} map.
  *
  * Lifted out of `decoders.ts` so BOTH the main thread and the decode worker
  * (`decode-worker.ts`) can reach it without pulling the registry — and with it

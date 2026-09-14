@@ -1,6 +1,6 @@
 /**
- * `renderers/image-histogram.ts` — the PURE binning / grouping math behind the
- * in-pane INFO PANEL (`primitives/ImageInfoPanel.tsx`).
+ * `ui/src/plots/image/components/image-histogram.ts` — the PURE binning / grouping math behind the
+ * in-pane INFO PANEL (`ui/src/primitives/components/ImageInfoPanel.tsx`).
  *
  * The overlay is self-contained: it bins the DECODED source the pane already
  * holds (no server). This module is the DOM-free, unit-tested core it delegates
@@ -279,7 +279,7 @@ export function computeHistograms(input: HistogramComputeInput): HistogramResult
 }
 
 // ---------------------------------------------------------------------------
-// tev-parity histograms (the info-panel compute; see image/histogram-binning.ts
+// tev-parity histograms (the info-panel compute; see ui/src/plots/image/definition/histogram-binning.ts
 // for the ported math). Same reader/series inputs as computeHistograms, but
 // bins through the symmetric-log₂ mapping at 400 bins, returns tev display
 // NORMALIZED values (density + percentile cap), and folds per-CHANNEL
@@ -375,7 +375,7 @@ export function computeTevHistograms(
 
 // ---------------------------------------------------------------------------
 // GPU-path glue (info panel M2). The GPU computes RAW folds (stats + range +
-// bin counts — `engine/histogram/compute.ts` via the pool's
+// bin counts — `ui/src/plots/image/webgpu/histogram/compute.ts` via the pool's
 // `PaneHandle.computeHistogram`); the pure functions here translate between
 // the panel's series specs and the GPU's weight vectors, and assemble the
 // SAME `TevHistogramsResult` shape the CPU path produces — mapping derivation

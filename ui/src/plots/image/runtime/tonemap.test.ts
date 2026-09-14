@@ -44,7 +44,7 @@ import {
 
 /** The plain SDR (non-HDR-surface), non-lut curve operators as `(rgb)=>rgb` —
  *  the CPU triple path's operator table, resolved from the registry (was
- *  `image/tonemap.ts`'s `TONEMAP_OPERATORS`). Every curve is surface-independent. */
+ *  `ui/src/plots/image/runtime/tonemap.ts`'s `TONEMAP_OPERATORS`). Every curve is surface-independent. */
 const TONEMAP_OPERATORS: Record<string, (rgb: RgbTriple) => RgbTriple> = Object.fromEntries(
   CPU_DISPLAY_OPERATIONS
     .filter((operation) => operation.definition.category !== "colormap")

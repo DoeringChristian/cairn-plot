@@ -1,5 +1,5 @@
 /**
- * Unit tests for the OBJECT-MODEL settings core (`viewport-settings.ts`):
+ * Unit tests for the OBJECT-MODEL settings core (`ui/src/state/settings/settings-channels.ts`):
  * stateless group channels + the frame applier discipline. A "viewport" here
  * is modelled exactly as the React frame holds it — a plain object box + an
  * applier with patch-identity dedupe — proving fan-out into members' OWN

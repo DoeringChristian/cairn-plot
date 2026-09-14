@@ -1,5 +1,5 @@
 /**
- * `renderers/use-image-controller.ts` — the image-pane adapter that projects an
+ * `ui/src/plots/image/components/use-image-controller.ts` — the image-pane adapter that projects an
  * image viewer's `{zoom, pan}` viewport (owned by `hooks/use-image-gestures.ts`
  * and lifted into the pane's props) onto the renderer-agnostic
  * {@link PlotController} facade the `<PlotToolbar>` drives. One per pane
@@ -90,7 +90,7 @@ export function notationToolbarButton(
 
 /**
  * The DISPLAY-TRANSFER options for an SDR / 8-bit image pane (menu order
- * sRGB · Gamma · Linear). DERIVED from `image/tonemap.ts`'s
+ * sRGB · Gamma · Linear). DERIVED from `ui/src/plots/image/runtime/tonemap.ts`'s
  * `DISPLAY_TRANSFER_OPERATION_IDS` + the registry entry labels (`encodingLabel`),
  * so it can't drift.
  * tev applies the same transfer selector to LDR images: the pane sRGB-DECODEs

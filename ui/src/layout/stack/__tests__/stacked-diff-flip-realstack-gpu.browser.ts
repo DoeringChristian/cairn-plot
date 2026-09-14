@@ -646,7 +646,7 @@ async function main(): Promise<void> {
     // new slot's first SUBMIT, `performance.now()`-stamped; a free-running rAF loop
     // records every browser PAINT boundary. For an image→DIFF flip (target kind
     // "diff", unambiguous) a paint strictly between the flip keydown and the first
-    // "diff" submit = a stale painted frame. `LeafView` now reads the resolve-cache
+    // "diff" submit = a stale painted frame. `GenericLeafView` now reads the resolve-cache
     // PURELY (`useSyncExternalStore`), so a warm/prefetched flip resolves the new slot
     // in the flip commit itself — there is ONE path (no `__cairnDisableSyncResolve`
     // pre/post toggle, no `staleDiffHolds` witness — the stale-operand frame is

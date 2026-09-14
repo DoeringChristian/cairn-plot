@@ -96,7 +96,7 @@ def _resolver(name: str) -> Any:
 
 
 # The named scalar colormaps every renderer offers — mirrors the TS
-# `COLORMAP_STOPS` keys (`ui/.../colormaps/lut.ts`) and the `Colormap` union
+# `COLORMAP_STOPS` keys (`ui/src/settings/colormaps/lut.ts`) and the `Colormap` union
 # minus the image-only `"none"` passthrough (a color-by-value chart always
 # needs a real ramp). Kept as one canonical tuple so Scatter / ParallelCoordinates
 # / Heatmap validate against the same allowed set with one error style.
@@ -937,7 +937,7 @@ def _image_sdr_transfer_props(
     CPU-BACKEND NOTE: the 2D-canvas backend is the P=1 hardware exception — it
     renders the SDR rendition only (it cannot emit extended output), so a
     ``peak>1`` degrades to the clamped SDR look there while the WebGPU backend
-    extends it. See ``renderers/CpuImagePane.tsx``."""
+    extends it. See ``ui/src/plots/image/cpu/view.tsx``."""
     if tonemap is None and gamma is None and peak is None:
         return {}
     tm = tonemap if tonemap is not None else ("gamma" if gamma is not None else "srgb")

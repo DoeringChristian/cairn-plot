@@ -1,5 +1,5 @@
 /**
- * `image/decoders/decode-pool-core.ts` — the decode worker pool SCHEDULER.
+ * `ui/src/plots/image/resources/decoders/decode-pool-core.ts` — the decode worker pool SCHEDULER.
  *
  * Pure: no Worker, no DOM. The browser shell (`decode-pool.ts`) supplies
  * `spawn` and forwards worker messages/errors here; node tests drive it with

@@ -1,5 +1,5 @@
 /**
- * `primitives/themed-portal.ts` — carry an origin element's THEME onto a
+ * `ui/src/primitives/components/themed-portal.ts` — carry an origin element's THEME onto a
  * `document.body`-portaled container.
  *
  * ## The problem

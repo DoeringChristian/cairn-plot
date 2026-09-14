@@ -1,5 +1,5 @@
 /**
- * GPU HISTOGRAM parity harness (info panel M2 — `engine/histogram/compute.ts`
+ * GPU HISTOGRAM parity harness (info panel M2 — `ui/src/plots/image/webgpu/histogram/compute.ts`
  * via `Device.computeTevTextureHistogram` / `computeDeepDepthHistogram`).
  *
  * Asserts, on a REAL device:

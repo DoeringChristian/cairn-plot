@@ -16,7 +16,7 @@
  * are simply not offered; the DEFAULT view (the loader's luminance-chroma →
  * RGB conversion) still shows them combined.
  *
- * Pure builder: the owner (`LeafView`) holds the selection state and performs
+ * Pure builder: the owner (`GenericLeafView`) holds the selection state and performs
  * the re-resolve; deep parts are skipped (P4 territory).
  */
 import type { ToolbarButtonSpec, ToolbarMenuOption } from "../../../primitives/controls/ToolbarConfig";

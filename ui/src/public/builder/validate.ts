@@ -58,7 +58,7 @@ export const COMPARE_ALIGNS: readonly string[] = [
 ];
 export const COMPARE_FITS: readonly string[] = ["crop", "fill"];
 /** TEV pixel-value overlay notations. The single runtime source of truth: the
- *  rendering type union `PixelValueNotation` (primitives/PixelValueOverlay.tsx)
+ *  rendering type union `PixelValueNotation` (ui/src/primitives/components/PixelValueOverlay.tsx)
  *  is DERIVED from this tuple (no third hand-kept copy), and the cross-language
  *  contract pins it to Python `_PIXEL_VALUE_NOTATIONS`. `as const` keeps the
  *  literal element types so the derived union stays `"decimal" | "int"`. */

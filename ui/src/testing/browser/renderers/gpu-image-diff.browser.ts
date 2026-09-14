@@ -12,7 +12,7 @@
  *      carries BOTH red-dominant (negative error) AND green-dominant (positive
  *      error) pixels, the analytic red-green map. The EXACT per-byte equivalence to
  *      the diff engine (and thus to GpuComparePane's diff blit for signed→red-green)
- *      is pinned separately by `engine/__tests__/image-operations.browser.ts` (unified
+ *      is pinned separately by `ui/src/plots/image/webgpu/__tests__/image-operations.browser.ts` (unified
  *      GPU path === the composed cpu twin === `ensureDiff`+`renderImage`); this
  *      proves the PANE wires that engine through `compareSource`.
  *   2. FLIP → magma: a cached FLIP diff renders a non-degenerate magma map.
@@ -23,7 +23,7 @@
  * READBACK NOTE. Content assertions read the ENGINE-LEVEL surface via the probe's
  * `readbackSurface()` seam — a fresh synchronous `renderPass()` then
  * `device.readback()` of the POOL-OWNED surface (the same deterministic path
- * `engine/__tests__/image-operations.browser.ts` and `GpuComparePane.readbackSurface`
+ * `ui/src/plots/image/webgpu/__tests__/image-operations.browser.ts` and `GpuComparePane.readbackSurface`
  * use). We do NOT sample the composited canvas via `createImageBitmap(canvas)`:
  * an in-DOM WebGPU swapchain rotates to a fresh back-buffer once a frame
  * composites, so `createImageBitmap` reads a BLANK texture on some builds (CI's

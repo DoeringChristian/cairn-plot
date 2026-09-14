@@ -1,5 +1,5 @@
 /**
- * `image/luminance.ts` — the ONE relative-luminance helper for cairn-plot.
+ * `ui/src/plots/image/cpu/luminance.ts` — the ONE relative-luminance helper for cairn-plot.
  *
  * Two DISTINCT luminance notions live in this codebase; keep them apart:
  *

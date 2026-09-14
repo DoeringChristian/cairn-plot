@@ -3,7 +3,7 @@
  * specification (+ its runtime data) with `.mount(el)` and `.toElement()`.
  *
  * The handle is PURE DATA plus a `Mounter` seam. The actual React/ReactDOM
- * rendering lives in the CORE bundle (`plot-bootstrap.tsx`), which installs
+ * rendering lives in the CORE bundle (`ui/src/host/bootstrap.tsx`), which installs
  * `window.__cairnPlotMountObject` and binds it here — so the builder modules
  * stay free of React and can be ESM-imported cheaply. When the core bundle is
  * not present, `.mount()`/`.toElement()` throw a clear, actionable error.

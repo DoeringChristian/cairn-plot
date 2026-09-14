@@ -1,5 +1,5 @@
 /**
- * `renderers/region-edit.ts` — the PURE geometry behind editing the persistent
+ * `ui/src/plots/image/components/region-edit.ts` — the PURE geometry behind editing the persistent
  * deep region rectangle (move + resize, and screen-space handle hit-testing).
  *
  * The rect lives in IMAGE-TEXEL space (so it stays glued to the same pixels

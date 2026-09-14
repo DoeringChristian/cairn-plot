@@ -6,7 +6,7 @@
  * Numerically mirrors the CPU reference (`ssim-reference.ts`), which is itself
  * pinned to scikit-image's `structural_similarity` (`ssim-reference.test.ts`);
  * the GPU kernel is cross-verified against the CPU reference in the browser
- * harness (`engine/__tests__/ssim.browser.ts`).
+ * harness (`ui/src/plots/image/webgpu/__tests__/ssim.browser.ts`).
  *
  * ## Pass graph (all intermediates rgba16float, RESULT resolution)
  * The moment passes are the ONLY ones that read the sources, so they apply the

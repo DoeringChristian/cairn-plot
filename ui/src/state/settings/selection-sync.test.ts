@@ -8,7 +8,7 @@
  * ruling reversal).
  *
  *   node --experimental-strip-types --test \
- *     src/lib/cairn-plot/viewport/selection-sync.test.ts
+ *     ui/src/state/settings/selection-sync.test.ts
  */
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";

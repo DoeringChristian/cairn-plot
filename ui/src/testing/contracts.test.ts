@@ -5,7 +5,7 @@
  *
  *   - colormaps                → `colormaps/lut.ts`'s `COLORMAP_NAMES`
  *                                (derived from the `COLORMAP_STOPS` registry)
- *   - tonemapOperators         → `image/tonemap.ts`'s SDR + HDR group arrays
+ *   - tonemapOperators         → `ui/src/plots/image/runtime/tonemap.ts`'s SDR + HDR group arrays
  *   - comparisonOperationPublicNames → `image/definition/image-operations.ts`'s
  *                                `listComparisonOperationPublicNames()`
  *   - compareViewModes/Aligns/Fits, pixelValueNotations

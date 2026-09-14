@@ -1,8 +1,8 @@
 /**
  * GPU HISTOGRAM COMPUTE (info-panel M2) — the WGSL + host-fold core behind
  * `Device.computeTevTextureHistogram` / `Device.computeDeepDepthHistogram`
- * (`engine/webgpu/device.ts`) and, above them, `PaneHandle.computeHistogram` /
- * `PaneHandle.computeDepthHistogram` (`engine/pool.ts`).
+ * (`ui/src/plots/image/webgpu/device/device.ts`) and, above them, `PaneHandle.computeHistogram` /
+ * `PaneHandle.computeDepthHistogram` (`ui/src/plots/image/webgpu/pool.ts`).
  *
  * CORE-SAFE, exactly like `engine/reduce/registry.ts`: only WGSL strings, pure
  * fold/twin functions and metadata — no GPU imports — so it loads under Node's
@@ -10,8 +10,8 @@
  * assembles its pipelines from the strings here.
  *
  * ## The two value-histogram passes (tev parity)
- * The CPU reference is `renderers/image-histogram.ts`'s `computeTevHistograms`
- * over `image/histogram-binning.ts` (the tev port). The GPU path reproduces it
+ * The CPU reference is `ui/src/plots/image/components/image-histogram.ts`'s `computeTevHistograms`
+ * over `ui/src/plots/image/definition/histogram-binning.ts` (the tev port). The GPU path reproduces it
  * over the pane's POOL-OWNED source texture at FULL pixel coverage (no
  * subsample budget):
  *
@@ -31,7 +31,7 @@
  *      bin-for-bin (the parity harness pins this on edge-safe data).
  *
  * A SERIES is described to the GPU as a vec4 of per-component weights
- * (`renderers/image-histogram.ts`'s `seriesWeightsFor`): a `"single"` series
+ * (`ui/src/plots/image/components/image-histogram.ts`'s `seriesWeightsFor`): a `"single"` series
  * is a one-hot vector, `"luminance"`/`"mean"` carry the combine coefficients.
  * Zero-weight components are SKIPPED (not multiplied) so a NaN in an
  * unselected channel cannot poison the series value — mirroring the CPU's

@@ -1,7 +1,7 @@
 /**
  * `buildCompareModeMenu` — the ONE builder for the compare/diff MODE toolbar
  * menu (split · <diff operations>), shared by the two hosts that
- * render it: `CompareView` (`plot-node.tsx`, the compare overlay toolbar) and
+ * render it: `CompareView` (`ui/src/host/PlotNodeView.tsx`, the compare overlay toolbar) and
  * `GpuComparePane` (the composited-view shell toolbar). Both copy-pasted the
  * same option list and the same onSelect
  * switch; this is that logic written once.

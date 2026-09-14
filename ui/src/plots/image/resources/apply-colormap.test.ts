@@ -5,7 +5,7 @@
  * shim (node has no `ImageData` global).
  *
  *   node --experimental-strip-types --test \
- *     src/plots/image/cpu/apply-colormap.test.ts
+ *     ui/src/plots/image/resources/apply-colormap.test.ts
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

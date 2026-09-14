@@ -1,5 +1,5 @@
 /**
- * `renderers/render-snapshot.ts` — the ONE per-commit description of what a
+ * `ui/src/plots/image/components/render-snapshot.ts` — the ONE per-commit description of what a
  * `GpuImagePane` frame presents, and the single rule that governs whether it may
  * paint.
  *

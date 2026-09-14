@@ -9,8 +9,8 @@
  * React context could never do — a module singleton can. Selection is the
  * switch that decides WHICH panes are in a live sync group: while ≥2 panes are
  * selected, the React layer threads a shared view-sync group id
- * (`viewport-settings.ts`) and settings-sync group id
- * (`viewport-settings.ts`) into every selected pane, so zoom/pan and
+ * (`ui/src/state/settings/settings-channels.ts`) and settings-sync group id
+ * (`ui/src/state/settings/settings-channels.ts`) into every selected pane, so zoom/pan and
  * display-setting changes broadcast across the whole selected group.
  *
  * Selection semantics (locked design):
@@ -23,8 +23,8 @@
  *
  * Intentionally React-free (a plain object + listener set) so it is
  * unit-testable without a DOM/React harness and reusable by any viewport type,
- * mirroring `viewport-settings.ts`'s framework-free bus. The React binding
- * (a context + `useSyncExternalStore`) lives in `plot-node.tsx`.
+ * mirroring `ui/src/state/settings/settings-channels.ts`'s framework-free bus. The React binding
+ * (a context + `useSyncExternalStore`) lives in `ui/src/host/PlotNodeView.tsx`.
  */
 
 import { __resetSettingsChannelsForTest } from "../settings/settings-channels.ts";
@@ -267,7 +267,7 @@ export interface PaneSyncGroups {
 }
 
 /**
- * The single source of truth (shared by `plot-node.tsx`'s `PaneSelectionFrame`
+ * The single source of truth (shared by `ui/src/host/PlotNodeView.tsx`'s `PaneSelectionFrame`
  * and the sync integration test) for a pane's selection-driven sync groups: a
  * pane syncs iff it is one of ≥2 selected panes; the whole active group shares
  * one `${base}-st` group id, and the first-selected member is

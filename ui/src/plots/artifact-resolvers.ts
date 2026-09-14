@@ -4,10 +4,10 @@ import type { ImageOverlayData } from "./types";
 import type { DataSource } from "../resources/data/data-source.ts";
 // Explicit `.ts` module path (not the `../transforms` barrel) so this module —
 // and its float-decode helpers — load under Node's type-stripping test runner
-// (a directory/barrel import is unsupported there); mirrors `image/decoders.ts`.
+// (a directory/barrel import is unsupported there); mirrors `ui/src/plots/image/resources/decoders.ts`.
 // `parse-npy` is a self-contained DOM-free leaf, safe as a static import;
 // `parse-npz` (the `DecompressionStream` inflate path) is loaded LAZILY at its
-// call sites below — again matching `image/decoders.ts` — so the eager module
+// call sites below — again matching `ui/src/plots/image/resources/decoders.ts` — so the eager module
 // graph (and this file's own float-decode unit test) stays clean.
 import { parseNpy } from "./transforms/parse-npy.ts";
 import type { parseNpz as ParseNpzFn } from "./transforms/parse-npz.ts";
@@ -86,7 +86,7 @@ export function resolveImageArtifacts(
 
 // ---------------------------------------------------------------------------
 // HDR/float decode seam — the ONE decode-to-ResolvedFloatImage core shared by
-// the compare DESCRIPTOR resolver (`plot-node.tsx`'s `resolveFrame`) and the
+// the compare DESCRIPTOR resolver (`ui/src/host/PlotNodeView.tsx`'s `resolveFrame`) and the
 // viewport ADAPTER's float-resolving resolver (`resolveImageArtifactsAsync`
 // below). Both need the SAME "fetch a URL, decode it, and route float samples
 // to a `ResolvedFloatImage` (the GPU/HDR path) vs 8-bit bytes to a browser-
@@ -128,7 +128,7 @@ export function decodedFloatToImageComparisonInput(
 
 /**
  * Fetch + decode an image source into a {@link ResolvedImageSource}. Mirrors
- * (and is now consumed by) `plot-node.tsx`'s `resolveFrame` client-decode seam:
+ * (and is now consumed by) `ui/src/host/PlotNodeView.tsx`'s `resolveFrame` client-decode seam:
  * fetch the bytes (following redirects — the FINAL url is the content key),
  * normalize through `decodeImage` (sniffed by Content-Type → URL ext → magic
  * bytes), and route `f32` → a `ResolvedFloatImage` (uploaded as

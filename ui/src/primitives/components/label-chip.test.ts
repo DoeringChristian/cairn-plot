@@ -10,7 +10,7 @@
  *
  * Background (the reported dedup bug): THREE divergent label chips existed — the
  * shared bottom-left `LabelChip`, `compositor.tsx`'s inline bottom-right span
- * (grip always, drag gated on a modifier), and `GpuComparePane.tsx`'s inline
+ * (grip always, drag gated on a modifier), and `ui/src/plots/image/webgpu/view.tsx`'s inline
  * bottom-right span (no grip). All now go through this ONE component; corner +
  * drag semantics are props. The consumers are the two image BACKENDS — the
  * compositor is a backend adapter that renders no chrome of its own.

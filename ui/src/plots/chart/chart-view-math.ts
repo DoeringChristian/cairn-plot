@@ -2,7 +2,7 @@
  * Pure domain math for the unified Plotly-style chart viewport.
  *
  * These are the SAME gestures/constants as ScalarPlot's Recharts state machine
- * (`renderers/scalar/use-plot-gestures.ts`) — a 6px box-zoom threshold, a 1.1
+ * (`ui/src/plots/scalar/backends/svg/support/use-plot-gestures.ts`) — a 6px box-zoom threshold, a 1.1
  * wheel factor, cursor-anchored wheel zoom, pixel-delta pan and box→domain
  * mapping — lifted into DOM-free functions so every 2D chart renderer shares
  * one implementation (and it can be unit-tested without a browser).
@@ -57,7 +57,7 @@ export const DRAG_START_PX = 3;
  * Box-zoom "thinness" floor (px). When a drag's extent is below this on ONE
  * axis (and at/above it on the other) the box snaps to a single-axis (1D) zoom
  * on the thick axis — Plotly's constrained box-zoom. The Scalar chart mirrors
- * this exact threshold in `renderers/scalar/use-plot-gestures.ts`.
+ * this exact threshold in `ui/src/plots/scalar/backends/svg/support/use-plot-gestures.ts`.
  */
 export const THIN_BAND_PX = 12;
 

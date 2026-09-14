@@ -1,5 +1,5 @@
 /**
- * `renderers/coalesce.ts` — the PURE latest-wins / one-in-flight state machine
+ * `ui/src/resources/coalesce.ts` — the PURE latest-wins / one-in-flight state machine
  * behind the DEEP depth slider's real-time drag (`useDeepFlatten`).
  *
  * The re-flatten is async, but we NEVER want a debounce (that adds visible lag)

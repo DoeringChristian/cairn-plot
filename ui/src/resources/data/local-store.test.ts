@@ -4,7 +4,7 @@
  * with TypeScript type-stripping:
  *
  *   node --experimental-strip-types --test \
- *     src/lib/cairn-plot/viewport/local-store.test.ts
+ *     ui/src/resources/data/local-store.test.ts
  *
  * `createLocalDataSource` is exercised with an EXPLICIT store (no `window`),
  * so this is DOM-free. `DecompressionStream`, `atob`, and `Response` are all

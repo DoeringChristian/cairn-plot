@@ -1,5 +1,5 @@
 /**
- * `image/pixel-buffer.ts` — the SELF-DESCRIBING float pixel buffer (user
+ * `ui/src/plots/image/runtime/pixel-buffer.ts` — the SELF-DESCRIBING float pixel buffer (user
  * ruling, 2026-08-25; tev's `PixelBuffer` translated to TypeScript).
  *
  * THE PROBLEM THIS SOLVES. JavaScript has no `half` scalar: a buffer of raw

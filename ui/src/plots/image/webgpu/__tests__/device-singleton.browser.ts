@@ -1,6 +1,6 @@
 /**
  * Shared-device singleton harness (Task 4 of the WebGPU engine,
- * Sub-project 1) — `engine/device.ts`'s `getSharedWebGpuDevice()`/
+ * Sub-project 1) — `ui/src/plots/image/webgpu/device/device.ts`'s `getSharedWebGpuDevice()`/
  * `resetSharedWebGpuDevice()`.
  *
  * jsdom has no WebGPU, so — like `backend-readback.browser.ts` — this is NOT
@@ -17,7 +17,7 @@
  *   3. `resetSharedWebGpuDevice()` then `getSharedWebGpuDevice()` again yields a FRESH
  *      instance (`!==` the first one).
  *   4. On a browser WITHOUT `navigator.gpu`, `getSharedWebGpuDevice()` REJECTS
- *      (no in-engine fallback — see `engine/device.ts`'s module doc; the
+ *      (no in-engine fallback — see `ui/src/plots/image/webgpu/device/device.ts`'s module doc; the
  *      caller is responsible for falling back to the legacy CPU pane).
  *
  * RUNNING:

@@ -1,5 +1,5 @@
 /**
- * `image/decoders/gain-map.ts` — HDR gain-map JPEG reconstruction (Adobe /
+ * `ui/src/plots/image/resources/decoders/gain-map.ts` — HDR gain-map JPEG reconstruction (Adobe /
  * ISO 21496-1 "hdr-gain-map").
  *
  * An HDR gain-map JPEG is an ordinary SDR JPEG (the "base rendition") that

@@ -1,5 +1,5 @@
 /**
- * Pins the tev-parity histogram math (`image/histogram-binning.ts`) to the
+ * Pins the tev-parity histogram math (`ui/src/plots/image/definition/histogram-binning.ts`) to the
  * formulas ported from Tom94/tev `ImageCanvas.cpp` (see the module doc): the
  * symmetric-log₂ mapping (odd, continuous, regularized by a=0.001), the
  * clamped value→bin mapping over [min,max], bin-edge inversion, and the

@@ -4,11 +4,11 @@
  *
  * Like `toolbar-seam.test.ts` / `pixel-overlay-stacking.test.ts`, no DOM is
  * configured here (JSX can't be imported under `--experimental-strip-types`),
- * so the runtime behaviour is proven by `__tests__/pane-enlarge.browser.ts`.
+ * so the runtime behaviour is proven by `ui/src/testing/browser/renderers/pane-enlarge.browser.ts`.
  * This asserts, at the SOURCE level, the invariants that keep the feature
  * correct and non-regressing. The body-portaled overlay CHROME (backdrop / ✕ /
  * Escape / scroll-lock / focus / themed portal) now lives ONCE in the shared
- * `primitives/FullscreenOverlayShell.tsx` (reused by the page-level selection
+ * `ui/src/primitives/components/FullscreenOverlayShell.tsx` (reused by the page-level selection
  * stage too), so those invariants are asserted there; `ImagePaneShell` keeps
  * only the reparent-not-remount + toolbar-seam wiring, asserted here:
  *   1. the overlay shell is body-portaled, fixed, high-z and its OWN stacking

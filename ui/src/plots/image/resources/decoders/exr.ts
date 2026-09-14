@@ -1,5 +1,5 @@
 /**
- * `image/decoders/exr.ts` — a minimal, dependency-free browser reader for the
+ * `ui/src/plots/image/resources/decoders/exr.ts` — a minimal, dependency-free browser reader for the
  * COMMON OpenEXR case, plugged into the decoder registry (`../decoders.ts`) in
  * place of the throwing stub.
  *

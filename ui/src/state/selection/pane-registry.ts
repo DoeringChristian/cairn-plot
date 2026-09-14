@@ -2,7 +2,7 @@
  * The SELECTION PANE REGISTRY — the bridge that lets the page-level selection
  * stage rebuild the selected panes without reparenting their live canvases.
  *
- * Every selectable `PaneSelectionFrame` (plot-node.tsx) registers its render
+ * Every selectable `PaneSelectionFrame` (ui/src/host/PlotNodeView.tsx) registers its render
  * DESCRIPTOR here — the pane's `PlotNode`, the `DataSource` + `shared` block it
  * resolves against, whether it is image-compatible, and a getter for its in-tree
  * element (theme origin) — keyed by the same process-unique `paneId` the
@@ -12,7 +12,7 @@
  * runtime store), building an enlarge grid of the pane nodes or a compare grid
  * of `CompareNode`s — instead of trying to move live GPU/2D canvases into a grid.
  *
- * Kept OUT of `plot-node.tsx` so it has no dependency on the stage — plot-node
+ * Kept OUT of `ui/src/host/PlotNodeView.tsx` so it has no dependency on the stage — plot-node
  * only WRITES the registry; the stage READS it. Framework-light (a plain Map +
  * a version tick for `useSyncExternalStore`).
  */

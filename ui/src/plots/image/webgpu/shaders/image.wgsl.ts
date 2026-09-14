@@ -2,8 +2,8 @@
  * IMAGE render-pass WGSL fragment shader (the engine's only backend, WebGPU).
  * Turns a float/8-bit source image texture into displayed pixels via
  * `exposure -> [colormap] -> tone-map operator -> output-encode`,
- * bit-for-bit (within 1/255) with the CPU reference in `image/tonemap.ts`.
- * See `engine/image-engine.ts`'s module doc comment for the full pipeline
+ * bit-for-bit (within 1/255) with the CPU reference in `ui/src/plots/image/runtime/tonemap.ts`.
+ * See `ui/src/plots/image/webgpu/image-engine.ts`'s module doc comment for the full pipeline
  * description and `ImageParams` contract; this file only documents the
  * SHADER-level details (uniform layout, operator porting, colormap LUT
  * convention).
@@ -14,8 +14,8 @@
  * `readback()`'s row order matches on-screen top-down expectations for the
  * same input — originally cross-checked pixel-for-pixel against a since-
  * removed WebGL2 backend by the parity test harness
- * (`engine/__tests__/image-pass.browser.ts`), now a same-backend regression
- * check against the CPU `image/tonemap.ts` reference.
+ * (`ui/src/plots/image/webgpu/__tests__/image-pass.browser.ts`), now a same-backend regression
+ * check against the CPU `ui/src/plots/image/runtime/tonemap.ts` reference.
  *
  * ## Uniform "block" layout (std140-compatible)
  * The RHI maps each `BindGroupEntry.binding = N` onto ONE named uniform
@@ -23,7 +23,7 @@
  * `ImageParams` fields the task brief describes as "one uniform block" are
  * split across THREE named uniform bindings, each a natural WGSL type
  * already supported by the bind-group builder (`WGSL_UNIFORM_TYPE_SIZE` in
- * `webgpu/device.ts` only knows scalar/vecN/mat4 types, no arrays/structs —
+ * `ui/src/plots/image/webgpu/device/device.ts` only knows scalar/vecN/mat4 types, no arrays/structs —
  * reusing exactly the vec4-uniform convention `scalebias.wgsl.ts` already
  * established avoids extending that table). Every field keeps IDENTICAL
  * component order:
@@ -62,7 +62,7 @@
  * axes first: outside it, the fragment returns `vec4(0.0)` (fully
  * transparent, RGBA all-zero) WITHOUT sampling `t_bind0` at all — no
  * clamped-edge smear/repeat. This requires the WebGPU canvas surface to be
- * configured `alphaMode:'premultiplied'` (`engine/webgpu/surface.ts`) so the
+ * configured `alphaMode:'premultiplied'` (`ui/src/engines/webgpu/surface.ts`) so the
  * zero-alpha fragment actually composites as transparent (an `'opaque'`
  * surface would force every pixel's alpha to 1 at present time, hiding this
  * fix) — the caller's checkerboard background (`cairn-checkerboard`, applied
@@ -74,7 +74,7 @@
  * sources work without requiring the optional `float32-filterable` WebGPU
  * feature — a REAL `Sampler`+`textureSample` pair (the RHI's
  * `Device.createSampler`) would need that feature for the HDR path, which
- * isn't guaranteed to be available (see `engine/webgpu/device.ts`'s "Texel
+ * isn't guaranteed to be available (see `ui/src/plots/image/webgpu/device/device.ts`'s "Texel
  * fetch" doc note), so it is NOT used here. Instead `filterMode` (`u_bind5`)
  * selects between a single nearest `textureLoad` (`filterMode==0`) and a
  * manual bilinear blend of the four neighboring texels (`filterMode==1`,
@@ -90,9 +90,9 @@
  * would produce — this is why enabling it by default does not change any of
  * this file's existing byte-exact parity-test cases (all texel-aligned).
  *
- * ## Operator porting (verbatim from `image/tonemap.ts`)
+ * ## Operator porting (verbatim from `ui/src/plots/image/runtime/tonemap.ts`)
  * `TONEMAP_OPERATORS` order or its keys, and `applyOperator`'s `if` chain,
- * match `image/tonemap.ts`'s object literal order: `linear`(0), `srgb`(1),
+ * match `ui/src/plots/image/runtime/tonemap.ts`'s object literal order: `linear`(0), `srgb`(1),
  * `reinhard`(2), `aces`(3). `linear` and `srgb` are literally the SAME
  * per-channel `clamp01` in the CPU source (the sRGB OETF lives in the
  * SEPARATE `outputEncode` stage, not the operator) — ported here as the
@@ -101,7 +101,7 @@
  * `max(x,0)` pre-clamp and, for ACES, the Narkowicz 2015 rational
  * approximation's exact coefficients).
  *
- * ## Output-encode porting (verbatim from `image/tonemap.ts`)
+ * ## Output-encode porting (verbatim from `ui/src/plots/image/runtime/tonemap.ts`)
  * `srgbOetf`/`outputEncode` port `srgbOetf`/`outputEncode` term-for-term: the
  * sRGB OETF's `12.92*v` / `1.055*pow(v,1/2.4)-0.055` piecewise split at
  * `0.0031308`, and the `gamma` override only replacing the sRGB path when
@@ -110,10 +110,10 @@
  * `image-engine.ts`'s `ImageParams.gamma?: number` -> uniform packing, which
  * writes `0` for an absent/non-positive `gamma`).
  *
- * ## HDR-out (extended) encode porting (verbatim from `image/tonemap.ts`)
+ * ## HDR-out (extended) encode porting (verbatim from `ui/src/plots/image/runtime/tonemap.ts`)
  * On the `hdrOut` path the fragment runs the EXTENDED transfer encode
  * (`extendedOutputEncodeF` -> `extendedSrgbOetf` / `extendedGammaEncode`),
- * porting `image/tonemap.ts`'s `extendedOutputEncode` term-for-term: the SAME
+ * porting `ui/src/plots/image/runtime/tonemap.ts`'s `extendedOutputEncode` term-for-term: the SAME
  * sRGB / power curves as the SDR encoders but UNCLAMPED (no `clamp(x,0,1)`, so
  * values past 1 survive as extended brightness) and MIRRORED through the origin
  * for negatives (`sign(x)*f(|x|)`). This is REQUIRED, not optional: a float16
@@ -146,7 +146,7 @@
  * NEAREST entry and the byte-exact parity cases are unaffected. This is a
  * new GPU-only pipeline stage (no
  * existing CPU renderer applies a colormap at this point in the pipeline;
- * `model/apply-colormap.ts`'s `applyColormap` operates on already-8-bit,
+ * `ui/src/plots/image/resources/apply-colormap.ts`'s `applyColormap` operates on already-8-bit,
  * already-tone-mapped diff visualizations, a different use case), so its
  * "source of truth" is this shader + the matching JS reference the test
  * harness computes the SAME way, not an existing CPU renderer.
@@ -243,7 +243,7 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VSOut {
 // (arity-1) render this is a 1x1 placeholder the caller binds (WebGPU requires
 // every declared binding to have a resource); the identity image operation
 // ignores b, so the single-image path is byte-for-byte unaffected. See
-// engine/image-engine.ts's srcB handling + operations/wgsl.ts.
+// ui/src/plots/image/webgpu/image-engine.ts's srcB handling + operations/wgsl.ts.
 @group(0) @binding(33) var t_bind11: texture_2d<f32>;
 // Logical binding 13 (uniform vec4: COMPOSITOR param — the per-frame scalar the
 // Phase-3 compositor image operations (split/blend) read) -> native binding 13*3+2 = 41.
@@ -251,7 +251,7 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VSOut {
 // Driven live (divider drag / blend slider) with NO shader recompile — only this
 // uniform changes. Defaults to vec4(0) when the caller omits it (zero-filled): the
 // diff/identity ops ignore it, so the single-image + diff paths are unaffected. See
-// engine/image-engine.ts's contentParam handling + operations/wgsl.ts.
+// ui/src/plots/image/webgpu/image-engine.ts's contentParam handling + operations/wgsl.ts.
 @group(0) @binding(41) var<uniform> u_bind13: vec4<f32>;
 // Logical binding 14 (uniform vec4: DISPLAY-space post-processing — the 8-bit
 // ImageProcessing block's brightness/contrast/flipSign) -> native binding
@@ -265,15 +265,15 @@ fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> VSOut {
 // (and every path where the pane sets no processing) renders bit-for-bit as
 // before. exposure/offset are NOT here — they are lifted top-level and applied in
 // scene-linear space (u_bind2.x / u_bind6). Ported byte-identically from
-// image/tonemap.ts's applyDisplayAdjust1.
+// ui/src/plots/image/runtime/tonemap.ts's applyDisplayAdjust1.
 @group(0) @binding(44) var<uniform> u_bind14: vec4<f32>;
 
 // Display-transfer stage — the SDR sRGB/gamma OETF (+ the sRGB EOTF that
 // LINEARIZES an 8-bit source when srgbDecode/u_bind8 is set) and the EXTENDED
 // (unclamped, origin-mirrored) HDR-out encoders — ASSEMBLED from the shared
 // OUTPUT_ENCODE_WGSL (image/encodings), the SAME block the diff-display blit
-// (engine/diff-engine.ts) interpolates. Ported byte-identically from
-// image/tonemap.ts's srgbOetf/srgbEotf/outputEncode + extended*; see that file's
+// (ui/src/plots/image/webgpu/diff-engine.ts) interpolates. Ported byte-identically from
+// ui/src/plots/image/runtime/tonemap.ts's srgbOetf/srgbEotf/outputEncode + extended*; see that file's
 // doc block for WHY the hdrOut path must transfer-encode (W3C ColorWeb-CG).
 ${OUTPUT_ENCODE_WGSL}
 
@@ -348,7 +348,7 @@ ${buildDisplayOperationWGSL(displayOperation)}
 ${buildImageOperationWGSL(imageOperation)}
 
 // DISPLAY-space post-processing (brightness/contrast/flipSign) — the numeric
-// mirror of image/tonemap.ts's applyDisplayAdjust1 (which itself is the numeric
+// mirror of ui/src/plots/image/runtime/tonemap.ts's applyDisplayAdjust1 (which itself is the numeric
 // definition of the CPU SDR pane's CSS filter). Applied to the ENCODED display
 // color AFTER the output-encode: brightness(1+b) then contrast(1+c) then, when
 // flipSign, invert(1). UNCLAMPED — the surface write / readback clamps to [0,1],
@@ -530,7 +530,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     // display-linear light the operator produced — the extended (unclamped,
     // origin-mirrored) sRGB OETF, or the extended power curve for the Gamma
     // operator (hasGamma). Values above 1 / below 0 survive as extended
-    // brightness. See extendedOutputEncodeF + image/tonemap.ts's doc block.
+    // brightness. See extendedOutputEncodeF + ui/src/plots/image/runtime/tonemap.ts's doc block.
     let enc = vec3<f32>(
       extendedOutputEncodeF(rgb.r, gamma, hasGamma),
       extendedOutputEncodeF(rgb.g, gamma, hasGamma),

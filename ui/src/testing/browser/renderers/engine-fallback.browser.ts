@@ -1,6 +1,6 @@
 /**
  * C1 fix (whole-branch review) — fault-injection harness: a per-pane GPU
- * hard failure (any GPU init/render failure — see `engine/pool.ts`'s
+ * hard failure (any GPU init/render failure — see `ui/src/plots/image/webgpu/pool.ts`'s
  * `MAX_LIVE_SWAPCHAINS` doc) must NEVER blank a pane. It must fall back to
  * the legacy CPU pane instead. This is also the runtime safety net half of
  * the WebGPU-only engine's fallback boundary — the capability-gated half
@@ -13,8 +13,8 @@
  * harness convention.
  *
  * FAULT INJECTION: the page is loaded with a `?forceEngineFail` query param
- * (`engine/test-hooks.ts`'s `forceEngineFailRequested()`, read by
- * `engine/pool.ts`'s `activateEntry()` — see its C1-fix doc comment) —
+ * (`ui/src/plots/image/webgpu/test-hooks.ts`'s `forceEngineFailRequested()`, read by
+ * `ui/src/plots/image/webgpu/pool.ts`'s `activateEntry()` — see its C1-fix doc comment) —
  * deterministically forces every pane-activation attempt to throw, exactly
  * the hard-failure branch the C1 fix targets, without needing to actually
  * exhaust a real GPU resource cap.

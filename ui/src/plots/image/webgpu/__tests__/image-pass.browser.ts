@@ -1,6 +1,6 @@
 /**
  * IMAGE render-pass readback-vs-CPU-reference harness (Task 5 of the WebGPU
- * engine, Sub-project 1) — `engine/image-engine.ts`'s `renderImage()`.
+ * engine, Sub-project 1) — `ui/src/plots/image/webgpu/image-engine.ts`'s `renderImage()`.
  *
  * jsdom has no WebGPU, so — like every other `*.browser.ts` harness in this
  * directory — this is NOT a unit test, it's a browser page driven via
@@ -8,7 +8,7 @@
  *
  * PARITY-CRITICAL: every case's expected value is computed by IMPORTING the
  * real `applyExposure`/`TONEMAP_OPERATORS`/`outputEncode` from
- * `image/tonemap.ts` (the CPU source of truth) rather than reimplementing
+ * `ui/src/plots/image/runtime/tonemap.ts` (the CPU source of truth) rather than reimplementing
  * that math in the test — the assertion is "GPU output === what the actual
  * CPU renderer's functions compute", not "GPU output matches my mental
  * model of tonemap.ts". The one GPU-only addition (scalar image + colormap
@@ -121,7 +121,7 @@ const BOUNDARY_LUT = buildBoundaryColormap();
 
 /**
  * JS mirror of `image.wgsl.ts`'s fragment shader, computed with the REAL
- * `applyExposure`/`TONEMAP_OPERATORS`/`outputEncode` from `image/tonemap.ts`
+ * `applyExposure`/`TONEMAP_OPERATORS`/`outputEncode` from `ui/src/plots/image/runtime/tonemap.ts`
  * for the parity-critical stages. Returns display-linear-or-encoded RGB in
  * [0,1] (encoded unless `params.hdrOut`). `colormap` must be supplied when
  * `params.isScalar`.
@@ -130,7 +130,7 @@ function computeExpectedRGB(px: number[], params: ImageParams, colormap?: Float3
   // FINAL display-space post-processing (u_bind14 / cairnDisplayAdjust): the
   // brightness/contrast/flipSign affine applied to the ENCODED color, mirroring
   // image.wgsl.ts's cairnDisplayAdjust via the REAL applyDisplayAdjust from
-  // image/tonemap.ts (the CPU source of truth). Identity when all three are unset,
+  // ui/src/plots/image/runtime/tonemap.ts (the CPU source of truth). Identity when all three are unset,
   // so every pre-existing case is unaffected.
   const adjust = {
     brightness: params.brightness ?? 0,
@@ -470,7 +470,7 @@ async function runAllCases(device: Device, label: string): Promise<Map<string, C
   // path (srgbDecode + operator srgb, an identity sRGB round-trip so the encoded
   // color equals the source code value) and asserts the GPU readback equals
   // computeExpectedRGB — which now applies the REAL applyDisplayAdjust from
-  // image/tonemap.ts. Values are chosen to also exercise the [0,1] clamp on both
+  // ui/src/plots/image/runtime/tonemap.ts. Values are chosen to also exercise the [0,1] clamp on both
   // sides (brightness pushes ch>1, contrast pushes ch<0), proving the surface/
   // readback clamp matches CSS rasterization. Deltas relative to the un-processed
   // srgb-roundtrip case above prove the stage is actually WIRED, not ignored.

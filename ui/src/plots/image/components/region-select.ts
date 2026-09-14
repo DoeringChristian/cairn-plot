@@ -1,5 +1,5 @@
 /**
- * `renderers/region-select.ts` — the PURE screen→texel mapping behind the deep
+ * `ui/src/plots/image/components/region-select.ts` — the PURE screen→texel mapping behind the deep
  * pane's "select depth from region" marquee.
  *
  * This is the SAME object-contain letterbox math `primitives/PixelValueOverlay`

@@ -11,7 +11,7 @@
  * These two functions are pure (no GPU, no DOM) so the formatting + reduction
  * are unit-testable in node (`ssim-metric.test.ts`); the GPU sourcing +
  * caching lives in `diff-engine.ts` (`ensureSsimScalar`), and the wiring in
- * the unified `renderers/GpuImagePane.tsx` (which absorbed the deleted
+ * the unified `ui/src/plots/image/webgpu/view.tsx` (which absorbed the deleted
  * `GpuComparePane` in the content-op unification).
  */
 

@@ -1,5 +1,5 @@
 /**
- * `"webgpu"` is the only backend the engine produces (see `engine/device.ts`'s
+ * `"webgpu"` is the only backend the engine produces (see `ui/src/plots/image/webgpu/device/device.ts`'s
  * module doc — the removed WebGL2 backend used to be the second value here).
  * Kept as a named type (rather than inlining the literal) so `Device.backend`
  * still reads as a real discriminant and callers/tests don't hardcode a bare
@@ -69,7 +69,7 @@ export interface Surface { readonly canvas: HTMLCanvasElement; readonly hdr: boo
  * per-component weights (one-hot for a single channel; luma/mean coefficients
  * for a combined series; zero components are never read, so a NaN in a
  * non-contributing channel cannot poison the series value). Built by
- * `renderers/image-histogram.ts`'s `seriesWeightsFor`.
+ * `ui/src/plots/image/components/image-histogram.ts`'s `seriesWeightsFor`.
  */
 export interface TexHistogramSpec {
   /** Real channels in the texel (components `0..channelCount-1`), ≤ 4. */
@@ -129,7 +129,7 @@ export interface Device {
    * Upload Z-sorted deep samples to GPU storage buffers for the depth-composite
    * pass (the deep depth slider on GPU-backed panes). Optional/defensive on the
    * interface; always present on the WebGPU backend. See
-   * `engine/shaders/deep-composite.wgsl.ts`.
+   * `ui/src/plots/image/webgpu/shaders/deep-composite.wgsl.ts`.
    */
   createDeepSampleBuffers?(spec: DeepGpuCsrSpec): DeepSampleBuffers;
   /**
@@ -144,7 +144,7 @@ export interface Device {
    * GPU-side parallel reduction (Task 7) over the `[0,width)x[0,height)`
    * region of `texA`/`texB` (RGB channels only): sum of squared per-channel
    * diffs (`sumSq`) and sum of absolute per-channel diffs (`sumAbs`), used by
-   * `engine/image-engine.ts`'s `computeMetrics`. Always present on the
+   * `ui/src/plots/image/webgpu/image-engine.ts`'s `computeMetrics`. Always present on the
    * engine's one backend (WebGPU); optional in the type as a defensive
    * contract — `computeMetrics` still has a `readback()` + CPU-loop fallback
    * for a hypothetical device without it. `width`/`height` may be smaller
@@ -173,7 +173,7 @@ export interface Device {
   /**
    * GPU tev-parity VALUE HISTOGRAM over the `[0,width)x[0,height)` region of
    * `tex` at FULL pixel coverage (the info panel's M2 compute — see
-   * `engine/histogram/compute.ts`): a stats pass (per-channel min/max/mean +
+   * `ui/src/plots/image/webgpu/histogram/compute.ts`): a stats pass (per-channel min/max/mean +
    * the shared series range, KB partial readback) then an atomic 400×k
    * binning pass through the symmetric-log₂ mapping derived from that range.
    * Binning math is f32 (the CPU reference is f64) — equal away from bin
@@ -203,7 +203,7 @@ export interface Device {
   /**
    * True while this device's underlying GPU context is LOST and awaiting
    * (asynchronous) browser restoration. WebGPU's `createSurface` is always a
-   * safe idempotent re-configure (see `webgpu/device.ts`'s doc), so this
+   * safe idempotent re-configure (see `ui/src/plots/image/webgpu/device/device.ts`'s doc), so this
    * always returns `false` in practice — kept on the interface as a forward-
    * looking safety hook rather than removed outright.
    */

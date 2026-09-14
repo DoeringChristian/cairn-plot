@@ -158,7 +158,7 @@ export const COLORMAP_LABELS: Record<ColormapName, string> = {
 
 /** The colormap menu-option list (id + label), DERIVED from the canonical set +
  *  label map. The image/compare toolbar prepends its own `"none"` passthrough
- *  (see `renderers/use-image-controller.ts`'s `COLORMAP_MENU_OPTIONS`). */
+ *  (see `ui/src/plots/image/components/use-image-controller.ts`'s `COLORMAP_MENU_OPTIONS`). */
 export const COLORMAP_OPTIONS: { id: ColormapName; label: string }[] =
   COLORMAP_NAMES.map((id) => ({ id, label: COLORMAP_LABELS[id] }));
 
@@ -184,7 +184,7 @@ const colormapFloatLUTs = new Map<string, Float32Array>();
 /**
  * The colormap LUT as a 256×4 RGBA-FLOAT table (`[0,1]`, alpha 1) — the ONE
  * representation the GPU LUT family binds as its 256×1 `rgba32float` texture
- * (`engine/image-engine.ts`'s `buildColormapTexture`, `diff-engine.ts`'s diff
+ * (`ui/src/plots/image/webgpu/image-engine.ts`'s `buildColormapTexture`, `diff-engine.ts`'s diff
  * blit, and the compare pane's diff colormap all consume THIS, not their own
  * hand-rolled `Uint8→Float` expansion). The stored bytes are the display
  * (sRGB-encoded) colormap colors; the LUT family samples them and writes them

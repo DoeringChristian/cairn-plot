@@ -1,9 +1,9 @@
 /**
  * GpuImagePane — the WebGPU image BACKEND. One of two interchangeable image
- * backends (see `CpuImagePane.tsx` for the CPU/2D-canvas twin); both accept the
- * shared `ImageBackendInput` union (`renderers/image-backend.ts`) and are chosen
+ * backends (see `ui/src/plots/image/cpu/view.tsx` for the CPU/2D-canvas twin); both accept the
+ * shared `ImageBackendInput` union (`ui/src/plots/image/runtime/contracts.ts`) and are chosen
  * upstream by the render mode (`resolveRenderMode` — cpu | gpu | auto). It wraps
- * `engine/image-engine.ts`'s `renderImage()` + `engine/pool.ts`'s many-panes
+ * `ui/src/plots/image/webgpu/image-engine.ts`'s `renderImage()` + `ui/src/plots/image/webgpu/pool.ts`'s many-panes
  * resource pool. Hard failures are reported to the owning runtime, which owns
  * fallback policy; this backend never imports or mounts another backend.
  *
@@ -32,7 +32,7 @@
  * (source identity / `imageUrl`+`colormap` / the `b` operand). Two render effects
  * (pre-paint for resident flips, post-paint for everything else) fire on a new
  * `viewport` object (zoom/pan/resize/dpr → `uvRect` + backing size),
- * exposure/operator/gamma, or a source change. `engine/pool.ts`'s `acquirePane`/
+ * exposure/operator/gamma, or a source change. `ui/src/plots/image/webgpu/pool.ts`'s `acquirePane`/
  * `releasePane` own the GPU lifecycle (shared device, LRU park/restore,
  * live-swapchain cap).
  *
@@ -422,7 +422,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
 
   // C1 fix (whole-branch review): true once the engine has definitively
   // failed to activate or render this pane (a non-context-lost hard failure
-  // — `engine/pool.ts`'s `handle.render()` returned `false`, or an
+  // — `ui/src/plots/image/webgpu/pool.ts`'s `handle.render()` returned `false`, or an
   // unexpected throw was caught below). Once set, this component permanently
   // renders the LEGACY CPU pane (`ImagePane`/`HdrImagePane`) instead of the
   // GPU canvas — see the bailout branch near the bottom of this component's
@@ -934,7 +934,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
         //   (a) BROWSER support for the extended-tone-mapping canvas path —
         //       probed for real (`capabilities.hdr` is a hardcoded backend flag,
         //       always `true`, so it is NOT this signal; see
-        //       `webgpu/device.ts`'s `probeExtendedToneMapping`). Firefox lacks
+        //       `ui/src/plots/image/webgpu/device/device.ts`'s `probeExtendedToneMapping`). Firefox lacks
         //       this entirely — a FUNDAMENTAL browser limitation.
         //   (b) DISPLAY/OS actually in HDR mode (`dynamic-range: high`). An HDR
         //       surface on a plain SDR panel just re-clips at the compositor.
@@ -1922,7 +1922,7 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
     // mode IS the reference — would flash the reference, so HOLD instead. Tagged
     // `compareIntended` so the render-log oracle (`isPipelineMismatch`) asserts
     // zero such presents reach the surface. The real-path leak (a diff `state`
-    // emitted as a plain image on a cold flip) is closed upstream by `LeafView`'s
+    // emitted as a plain image on a cold flip) is closed upstream by `GenericLeafView`'s
     // reference-leak guard + diff-pair prefetch; this is the last-line floor.
     if (hasCompare) return false;
     // `handle.render()` is synchronous here, so a throw would unmount the subtree;
@@ -2858,6 +2858,6 @@ export default function GpuImagePane(backendProps: ImageBackendInput) {
 }
 
 // Compile-time contract check: GpuImagePane implements the shared backend
-// interface (`renderers/image-backend.ts`) — interchangeable with CpuImagePane.
+// interface (`ui/src/plots/image/runtime/contracts.ts`) — interchangeable with CpuImagePane.
 const _backendCheck: ImageBackendView = GpuImagePane;
 void _backendCheck;

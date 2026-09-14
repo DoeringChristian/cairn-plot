@@ -51,7 +51,7 @@ function compareUrlChild(fg: string, ref: string, label: string): unknown {
   };
 }
 // A DIFF-mode compare (mode="diff") lowers — post Phase 2c routing — to the SAME
-// `image` renderer family an image leaf uses (`LeafView` + a `compareSource`),
+// `image` renderer family an image leaf uses (`GenericLeafView` + a `compareSource`),
 // so an `[image, diff]` stack is HOMOGENEOUS and a flip is a SOURCE-SWAP on ONE
 // reused instance (no remount / no flicker). URL sources ⇒ CpuImagePane paints
 // each into its viewport canvas (no WebGPU needed to prove the reconciliation).

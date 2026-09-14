@@ -1,5 +1,5 @@
 /**
- * `primitives/toolbar-popover.ts` — the PURE placement rule for the toolbar's
+ * `ui/src/primitives/components/toolbar-popover.ts` — the PURE placement rule for the toolbar's
  * transient popovers (the `ToolbarMenu` dropdown + the folded `OverflowMenu`
  * panel), extracted so it is unit-testable without a DOM.
  *

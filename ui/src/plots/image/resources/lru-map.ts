@@ -1,5 +1,5 @@
 /**
- * `image/lru-map.ts` — a tiny bounded LRU map.
+ * `ui/src/plots/image/resources/lru-map.ts` — a tiny bounded LRU map.
  *
  * Backed by a `Map`, whose iteration order is insertion order. `get` bumps a
  * key to the most-recently-used end (delete + re-set); `set` evicts the
@@ -8,7 +8,7 @@
  * plain FIFO lacks (a FIFO evicts by INSERTION age, discarding hot-but-old
  * keys). `onEvict` fires with each evicted entry (e.g. to free GPU/CPU buffers).
  *
- * NOTE (follow-up, other owners): the LRUs in `engine/diff-engine.ts` and the
+ * NOTE (follow-up, other owners): the LRUs in `ui/src/plots/image/webgpu/diff-engine.ts` and the
  * context/`pool.ts` pools are their owners' and are NOT consolidated here.
  */
 export interface LruMap<T> {

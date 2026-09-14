@@ -1,7 +1,7 @@
 /**
  * DEEP GPU-composite readback-vs-wasm-flatten harness — the primary deep depth
- * path for GPU panes (`engine/shaders/deep-composite.wgsl.ts` +
- * `webgpu/device.ts`'s `createDeepSampleBuffers`/`compositeDeep`).
+ * path for GPU panes (`ui/src/plots/image/webgpu/shaders/deep-composite.wgsl.ts` +
+ * `ui/src/plots/image/webgpu/device/device.ts`'s `createDeepSampleBuffers`/`compositeDeep`).
  *
  * jsdom has no WebGPU, so — like every other `*.browser.ts` harness here — this
  * is NOT a unit test; it's a browser page driven via claude-in-chrome.

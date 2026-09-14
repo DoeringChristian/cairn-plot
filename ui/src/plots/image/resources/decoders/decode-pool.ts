@@ -1,5 +1,5 @@
 /**
- * `image/decoders/decode-pool.ts` — browser shell of the decode worker pool.
+ * `ui/src/plots/image/resources/decoders/decode-pool.ts` — browser shell of the decode worker pool.
  *
  * Spawns N instances of the ONE inlined worker module (`decode-worker.ts`,
  * Vite `?worker&inline`, so `build:plot-inline` stays a single file) and wires

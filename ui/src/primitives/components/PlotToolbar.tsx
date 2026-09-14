@@ -1,5 +1,5 @@
 /**
- * `primitives/PlotToolbar.tsx` — the cairn-plot answer to Plotly's modebar (S1).
+ * `ui/src/primitives/components/PlotToolbar.tsx` — the cairn-plot answer to Plotly's modebar (S1).
  *
  * A hover-reveal cluster of icon buttons anchored inside a chart's plot area.
  * Its SOLE meaningful input is a {@link PlotController}: every button group is

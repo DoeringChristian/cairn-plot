@@ -4,7 +4,7 @@
  * extraction routine + ONE active-property resolver, not four per-card
  * copies (spec-visual-compare.md quality bar #3).
  *
- * SDK layout (see `cairn/sdk/handlers/_properties.py`): an npz member named
+ * SDK layout (see `packages/python/src/cairn_plot/_sdk/handlers/_properties.py`): an npz member named
  * `values_<name>` per property; OLD artifacts (logged before named
  * properties existed) instead carry a bare `values` member, which is
  * canonicalized here to a single property named "value".

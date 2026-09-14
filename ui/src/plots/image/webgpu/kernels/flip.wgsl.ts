@@ -1,7 +1,7 @@
 /**
  * FLIP (LDR-FLIP) multi-pass diff kernel (spec §FLIP), per Andersson et al.
  * 2020. Numerically mirrors the CPU reference (`flip-reference.ts`) — the two
- * are cross-verified in `engine/__tests__/flip.browser.ts` (GPU vs CPU) and the
+ * are cross-verified in `ui/src/plots/image/webgpu/__tests__/flip.browser.ts` (GPU vs CPU) and the
  * CPU reference itself against the official `flip-evaluator` package
  * (`flip-reference.test.ts`).
  *

@@ -2,7 +2,7 @@
  * `useChartView` — the single, Plotly-style zoom/pan state machine shared by
  * every 2D cairn-plot chart renderer (ScatterPlot / HistogramPlot / BarChart /
  * Heatmap). It mirrors ScalarPlot's Recharts gesture machine
- * (`renderers/scalar/use-plot-gestures.ts`) exactly — wheel-zoom to cursor,
+ * (`ui/src/plots/scalar/backends/svg/support/use-plot-gestures.ts`) exactly — wheel-zoom to cursor,
  * drag-to-box-zoom, modifier/mode pan, double-click reset — so all charts feel
  * identical.
  *
@@ -91,7 +91,7 @@ export const ChartViewSyncProvider = ChartViewSyncContext.Provider;
 
 // The internal drag vocabulary. `"box"` (box-zoom) is deliberately kept as the
 // internal token — the toolbar's PUBLIC name `"zoom"` is translated to `"box"`
-// at the controller adapter (renderers/use-chart-controller.ts). `"select"`
+// at the controller adapter (ui/src/plots/image/components/use-chart-controller.ts). `"select"`
 // (rubber-band marquee) and `"lasso"` (freeform polygon) collect a geometry and
 // emit it via the `onSelect` callback on release instead of zooming; a renderer
 // (ScatterPlot today) hit-tests its marks against that geometry. `"pan"` drags

@@ -6,14 +6,14 @@
  * pipelines. CORE-SAFE — it holds only WGSL strings + pure CPU twins + metadata
  * and imports NO GPU code (exactly like the content-op / encoding registries),
  * so it loads under Node's `--experimental-strip-types` test runner
- * (`registry.test.ts`) and the WebGPU backend (`engine/webgpu/device.ts`)
+ * (`registry.test.ts`) and the WebGPU backend (`ui/src/plots/image/webgpu/device/device.ts`)
  * ASSEMBLES its compute pipelines from this module's snippets.
  *
  * ## Why a family (the directive)
  * Every metric SCALAR the compare chip shows used to read a FULL result texture
  * back to CPU and loop in JS: SSIM's mean averaged a ~64MB rgba32float readback
  * (a 4M-iteration JS loop) to produce ONE float, and MSE/MAE ran a fused
- * bespoke compute pass (`shaders/reduce.wgsl.ts`, now folded in here). This
+ * bespoke compute pass (`ui/src/plots/image/webgpu/reduce/registry.ts`, now folded in here). This
  * family replaces those with a GPU tree-reduce whose readback is a tiny
  * per-workgroup partial buffer (KB, not MB) the host finishes.
  *
@@ -48,7 +48,7 @@ export const REDUCE_WORKGROUP_SIZE = 256;
  * the host-side FINALIZE that turns the raw GPU accumulator (a sum/min/max over
  * the region) + the element count into the reported scalar. Declared once; the
  * shared harness (WGSL assembler + the host partial-combine in
- * `engine/webgpu/device.ts`) reads it. `min`/`max` slot in as new entries with
+ * `ui/src/plots/image/webgpu/device/device.ts`) reads it. `min`/`max` slot in as new entries with
  * no harness change.
  */
 export interface ReduceOp {
@@ -176,7 +176,7 @@ registerReduceProgram({
 
 // Fused per-channel squared + absolute diff of two sources (drives MSE/MAE/PSNR
 // via `image-engine.ts`'s `metricsFromSums`). This is the exact per-pixel
-// expression the pre-existing bespoke `shaders/reduce.wgsl.ts` computed — folded
+// expression the pre-existing bespoke `ui/src/plots/image/webgpu/reduce/registry.ts` computed — folded
 // into the family so MSE/MAE are byte-for-byte unchanged while sharing the
 // harness. Lane 0 = Σ_c d_c² (RGB); lane 1 = Σ_c |d_c|.
 registerReduceProgram({

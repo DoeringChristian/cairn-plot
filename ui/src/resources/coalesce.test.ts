@@ -3,7 +3,7 @@
  * the state machine behind the deep depth slider's debounce-free real-time drag.
  *
  *   node --experimental-strip-types --test \
- *     src/plots/image/components/coalesce.test.ts
+ *     ui/src/resources/coalesce.test.ts
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

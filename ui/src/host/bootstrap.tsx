@@ -19,8 +19,8 @@
  *
  * The spec is a recursive TREE; `PlotApp` is now a thin root wrapper
  * that builds one `DataSource` and renders `<PlotNodeView>` under a
- * `SharedPlotContext` (see plot-node.tsx). The former flat single-renderer body
- * lives on there as `LeafView`.
+ * `SharedPlotContext` (see ui/src/host/PlotNodeView.tsx). The former flat single-renderer body
+ * lives on there as `GenericLeafView`.
  */
 import React, { useEffect, useRef } from "react";
 import ReactDOM from "react-dom/client";
@@ -173,7 +173,7 @@ function Message({ text, error }: { text: string; error?: boolean }) {
  * mount) or read from the page (server `/plot` root, possibly via a `?src=`
  * fetch). Thin root wrapper (G1): build ONE
  * `DataSource` → seed `SharedPlotContext` → `<PlotNodeView node={root}>`. Each
- * leaf owns its own resolve + bounded registry-wait (plot-node.tsx). NEVER
+ * leaf owns its own resolve + bounded registry-wait (ui/src/host/PlotNodeView.tsx). NEVER
  * throws to the host — a spec read failure degrades to a visible message.
  */
 export function PlotApp({ spec: given }: { spec?: PlotSpec }) {

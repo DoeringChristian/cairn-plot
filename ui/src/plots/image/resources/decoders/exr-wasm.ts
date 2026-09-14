@@ -1,5 +1,5 @@
 /**
- * `image/decoders/exr-wasm.ts` — the WASM-first EXR decode core.
+ * `ui/src/plots/image/resources/decoders/exr-wasm.ts` — the WASM-first EXR decode core.
  *
  * Wraps the official C++ OpenEXR library (v3.4.9, built to WASM with Emscripten
  * by `wasm/openexr/build.sh` and embedded as inline base64 in `wasm-inline/`) and layers the TS full decoder

@@ -33,7 +33,7 @@ test("the compare resolver has NO second decoder — operands come from the ONE 
   // transit) is now STRUCTURALLY impossible in the strongest way available:
   // the compare path does not repack operands at all. Each operand is resolved
   // by `resolveImageData` — the ONE image leaf resolver — and its `ImageSource`
-  // (whose `pixels` buffer is self-describing, image/pixel-buffer.ts) is
+  // (whose `pixels` buffer is self-describing, ui/src/plots/image/runtime/pixel-buffer.ts) is
   // forwarded whole. A private duplicate here is what dropped `precision`, and
   // what ignored `data.format` so a float (.npy) compare never decoded.
   assert.match(

@@ -5,7 +5,7 @@
  * exist as a fallback for when `navigator.gpu` is unavailable; it was
  * removed in favor of a clean WebGPU-or-legacy-CPU-pane boundary — see
  * Shared WebGPU device/RHI lifecycle. When WebGPU is
- * unavailable, `engine/device.ts`'s `getSharedDevice()` rejects and callers
+ * unavailable, `ui/src/plots/image/webgpu/device/device.ts`'s `getSharedDevice()` rejects and callers
  * fall back to the legacy CPU/2D-canvas pane, not another GPU backend.
  *
  * ## Bind-group convention: native WebGPU bind groups
@@ -65,7 +65,7 @@
  * always `rgba16float` (correct order already).
  *
  * ## Texel fetch (`textureLoad`), not filtered `textureSample`
- * See `engine/shaders/passthrough.wgsl.ts`'s module doc comment: our two
+ * See `ui/src/plots/image/webgpu/shaders/passthrough.wgsl.ts`'s module doc comment: our two
  * hand-authored shaders read texels with `textureLoad` (no sampler
  * involved) rather than `textureSample`, to avoid the `unfilterable-float`
  * sample-type restriction WebGPU imposes on `rgba32float`/`r32float`
@@ -307,7 +307,7 @@ type BindingInfo = UniformBindingInfo | ResourceBindingInfo;
 
 /**
  * `vec4<f32>`/`vec4f` is the only uniform type our Sub-project-1 shaders
- * use (see `engine/shaders/scalebias.wgsl.ts`) — this table is intentionally
+ * use (see `ui/src/plots/image/webgpu/shaders/scalebias.wgsl.ts`) — this table is intentionally
  * minimal, not a general WGSL type-size evaluator.
  */
 const WGSL_UNIFORM_TYPE_SIZE: Record<string, number> = {
@@ -927,7 +927,7 @@ export async function createWebGPUDevice(): Promise<Device> {
     return { pipeline: deepPipeline, layout: deepBindGroupLayout };
   }
 
-  // GPU HISTOGRAM COMPUTE (info panel M2 — `engine/histogram/compute.ts`).
+  // GPU HISTOGRAM COMPUTE (info panel M2 — `ui/src/plots/image/webgpu/histogram/compute.ts`).
   // Compute pipelines + explicit bind-group layouts memoized per variant, the
   // same "shared harness, no per-use pipelines" discipline as `reducePipelines`
   // above. Dedicated layouts (not parseWGSLBindings) because these passes bind

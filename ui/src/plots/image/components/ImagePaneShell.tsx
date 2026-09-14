@@ -4,11 +4,11 @@
  * cairn-plot ships two panes that are both "an image in a zoom/pan viewport
  * with a toolbar, a TEV pixel-value overlay and a label chip", differing only
  * in HOW they put pixels on screen:
- *   - `renderers/CpuImagePane.tsx`  — paints its content bitmap into a
+ *   - `ui/src/plots/image/cpu/view.tsx`  — paints its content bitmap into a
  *     device-pixel 2D canvas, zoom via the viewport quad it blits to.
- *   - `renderers/GpuImagePane.tsx`  — WebGPU engine, zoom via a sampled uvRect;
+ *   - `ui/src/plots/image/webgpu/view.tsx`  — WebGPU engine, zoom via a sampled uvRect;
  *     also owns the split/diff compositor (content-op unification, Phase
- *     4 — the standalone `media-compare/GpuComparePane.tsx` it replaced is gone).
+ *     4 — the standalone `ui/src/plots/image/webgpu/view.tsx` it replaced is gone).
  * Both backends share ONE viewport (the same `zoom`/`pan` state and the same
  * gesture wiring); they differ only in what draws inside it.
  * Everything AROUND the pixels — the pane root, the ONE viewport element (the
@@ -266,7 +266,7 @@ export interface ImagePaneShellProps {
   extraModified?: boolean;
 
   /**
-   * CONTROLLED single-pane fullscreen state. The plot leaf (`LeafView`) owns
+   * CONTROLLED single-pane fullscreen state. The plot leaf (`GenericLeafView`) owns
    * the flag ABOVE the async-resolve swap boundary, so a cold re-resolve
    * (channel pick → "Loading…" placeholder → this subtree unmounts) cannot
    * reset it — the pane re-enters fullscreen when it remounts. Absent (a
@@ -279,7 +279,7 @@ export interface ImagePaneShellProps {
    *  sectioned info panel (stats + tev-parity histogram + read-outs) is pinned
    *  to the pane's top-right (below the toolbar). The pane closes `readChannel`
    *  over its own decoded buffer (no server); see
-   *  `primitives/ImageInfoPanel.tsx`. Only wired for the `single` overlay
+   *  `ui/src/primitives/components/ImageInfoPanel.tsx`. Only wired for the `single` overlay
    *  variant (the cursor read-out maps through the shared `viewport.quad`).
    *  Absent = no panel. */
   histogram?: HistogramSource;

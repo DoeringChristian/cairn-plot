@@ -1,7 +1,7 @@
 /**
  * The recursive cairn-plot compositor (G1). A `PlotSpec` is a TREE of
  * `PlotNode`s — `plot` leaves, `grid` layouts, `compare` panes — and this
- * module renders it. `PlotApp` (plot-bootstrap.tsx) is now a thin root wrapper
+ * module renders it. `PlotApp` (ui/src/host/bootstrap.tsx) is now a thin root wrapper
  * that builds ONE `DataSource` for the whole tree, seeds a `SharedPlotContext`,
  * and mounts `<PlotNodeView node={root} />`.
  *
@@ -72,7 +72,7 @@ import { ImageHostRuntimeContext } from "./host-context.ts";
 const RENDERER_WAIT_MS = 4000;
 
 // ---------------------------------------------------------------------------
-// Multi-viewport SELECTION (see viewport/selection-store.ts) is PAGE-WIDE. There
+// Multi-viewport SELECTION (see ui/src/state/selection/selection-store.ts) is PAGE-WIDE. There
 // is ONE document-scoped `SelectionStore` (`getGlobalSelectionStore`) shared by
 // every pane on the page — standalone `PlotApp` mounts AND grid cells alike, via
 // the SAME `PlotCell` wrapper (`PlotNodeView` wraps every leaf/compare

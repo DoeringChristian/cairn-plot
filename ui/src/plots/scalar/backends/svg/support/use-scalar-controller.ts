@@ -1,5 +1,5 @@
 /**
- * `renderers/scalar/use-scalar-controller.ts` — the ScalarPlot adapter that
+ * `ui/src/plots/scalar/backends/svg/support/use-scalar-controller.ts` — the ScalarPlot adapter that
  * projects its `ChartViewState {xMin,xMax,yMin,yMax}` + `onViewChange` interaction
  * substrate onto the renderer-agnostic {@link PlotController} facade the
  * `<PlotToolbar>` drives.

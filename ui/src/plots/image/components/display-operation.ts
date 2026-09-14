@@ -1,5 +1,5 @@
 /**
- * `renderers/display-operation.ts` — the ONE unified DISPLAY-ENCODING menu +
+ * `ui/src/plots/image/components/display-operation.ts` — the ONE unified DISPLAY-ENCODING menu +
  * viewport encoding projection.
  *
  * An image pane's colormap and tone-map menus were TWO controls answering ONE

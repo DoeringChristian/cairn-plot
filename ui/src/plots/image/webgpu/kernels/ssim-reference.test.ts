@@ -17,7 +17,7 @@
  *
  * This is the FIRST of the two-sided SSIM verification (spec §diff-kernels):
  * here the CPU reference is checked against skimage; the browser harness
- * (`engine/__tests__/ssim.browser.ts`) checks the GPU kernel against this CPU
+ * (`ui/src/plots/image/webgpu/__tests__/ssim.browser.ts`) checks the GPU kernel against this CPU
  * reference.
  */
 import { test } from "node:test";

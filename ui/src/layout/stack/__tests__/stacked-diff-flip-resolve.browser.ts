@@ -1,12 +1,12 @@
 /**
  * RESOLVE-TRANSITION harness (Finding 2) — the LeafView resolve path under a
  * rapid stacked image↔diff flip, driven through the REAL descriptor tree
- * (`PlotApp` → `GridView` stacked → `NodeDispatch` → `LeafView`), CPU renderers
+ * (`PlotApp` → `GridView` stacked → `NodeDispatch` → `GenericLeafView`), CPU renderers
  * (URL sources ⇒ `CpuImagePane`, no WebGPU needed — the resolve logic is
  * renderer-agnostic).
  *
- * WHAT IT PROVES. A stacked `[image, diff]` grid reuses ONE `LeafView` instance across
- * the flip. `LeafView` reads its resolved value PURELY from the subscribable resolve-
+ * WHAT IT PROVES. A stacked `[image, diff]` grid reuses ONE `GenericLeafView` instance across
+ * the flip. `GenericLeafView` reads its resolved value PURELY from the subscribable resolve-
  * cache keyed by the CURRENT `resolveKey` (no component `state` cell), so a WARM/
  * prefetched flip resolves the new slot SYNCHRONOUSLY in the flip commit — no
  * placeholder — and never holds the previous slot's resolution. The stale-diff / half-
@@ -16,7 +16,7 @@
  * miss) shows a brief `"Loading…"` (accepted); the storm below is WARM (both slots pre-
  * visited), so it must NOT drop to a placeholder.
  *
- * `window.__cairnLeafResolveStats` exposes `placeholderMounts` (set in `plot-node.tsx`).
+ * `window.__cairnLeafResolveStats` exposes `placeholderMounts` (set in `ui/src/host/PlotNodeView.tsx`).
  * The harness warms the resolve cache for BOTH slots, resets the counter, storms the
  * flip, and asserts `placeholderMounts === 0` (no flash on warm flips).
  */

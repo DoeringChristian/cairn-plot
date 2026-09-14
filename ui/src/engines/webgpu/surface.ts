@@ -4,7 +4,7 @@
  *
  * `configureHDRSurface`/`configureSDRSurface` are pure `context.configure(...)`
  * wrappers — they do NOT decide *whether* to request HDR (that's
- * `engine/webgpu/device.ts`'s `createSurface({hdr})`, driven by whatever a
+ * `ui/src/plots/image/webgpu/device/device.ts`'s `createSurface({hdr})`, driven by whatever a
  * caller — ultimately the renderer, a later task — asks for). Per the
  * Task 3 brief, neither function gates on
  * `matchMedia('(dynamic-range: high)')`: the spike's own recipe doc

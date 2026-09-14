@@ -1,12 +1,12 @@
 /**
  * Many-panes GPU resource pool (Task 6 of the WebGPU engine, Sub-project 1) —
  * `acquirePane(canvas)` / `releasePane(handle)`, consumed by
- * `renderers/GpuImagePane.tsx`.
+ * `ui/src/plots/image/webgpu/view.tsx`.
  *
  * ## Why a pool at all
  * A page can host MANY image panes (a gallery grid, a notebook with dozens of
  * plots). One `GPUDevice` backs MANY `GPUCanvasContext`s just fine
- * (`engine/device.ts`'s module doc) — so every pane SHARES the ONE
+ * (`ui/src/plots/image/webgpu/device/device.ts`'s module doc) — so every pane SHARES the ONE
  * `getSharedDevice()` instance; the per-pane cost is each pane's own source
  * texture (`Texture`) — potentially large for HDR float images.
  *
@@ -38,7 +38,7 @@
  * `Device.destroy()` — see the RHI's doc notes) — so "parking" frees the
  * (often large) source `Texture` and simply stops rendering to the canvas;
  * re-`createSurface`-ing the SAME canvas on restore is a safe idempotent
- * re-configure (`webgpu/device.ts`'s `createSurface`).
+ * re-configure (`ui/src/plots/image/webgpu/device/device.ts`'s `createSurface`).
  */
 import {
   getGpuDiffCacheLimits,
@@ -287,7 +287,7 @@ export interface PaneHandle {
    * however many pixels this allocates). No-op if `width`/`height` (rounded)
    * match the current backing size. If the pane is currently live, resizes
    * immediately (re-`configure`s the surface — a safe idempotent call, same
-   * as `webgpu/device.ts`'s `createSurface` doc note); if parked, the new
+   * as `ui/src/plots/image/webgpu/device/device.ts`'s `createSurface` doc note); if parked, the new
    * size is retained and applied by the next `render()`/`restore()`.
    */
   resize(width: number, height: number): void;
@@ -309,7 +309,7 @@ export interface PaneHandle {
    * instead of letting the exception propagate into the caller's
    * `useEffect` (which would otherwise unmount the caller's whole subtree —
    * React 18 unmounts to the nearest root on an uncaught effect throw).
-   * Returns `true` on success. Callers (`renderers/GpuImagePane.tsx`) treat
+   * Returns `true` on success. Callers (`ui/src/plots/image/webgpu/view.tsx`) treat
    * a `false` return as "fall back to the legacy CPU pane".
    */
   render(params: ImageParams): boolean;
@@ -1358,7 +1358,7 @@ function averageSampleRgb(px: Uint8Array | Float32Array, hdr: boolean): { r: num
  * C1 fix (whole-branch review): `activateEntry()`'s hard-failure vector and
  * `renderImage()`'s are both inside ONE try/catch; a failure from EITHER
  * parks the entry and returns `false` instead of throwing into the caller
- * (`PaneHandle.render()` → `renderers/GpuImagePane.tsx`'s render effect),
+ * (`PaneHandle.render()` → `ui/src/plots/image/webgpu/view.tsx`'s render effect),
  * which would otherwise unmount the caller's whole subtree.
  */
 function attemptRender(entry: PaneEntry, params: ImageParams): boolean {
@@ -2159,7 +2159,7 @@ export function releasePane(handle: PaneHandle): void {
 }
 
 /** Number of currently-LIVE (non-parked) panes across the whole pool —
- *  test/introspection hook (mirrors `engine/device.ts`'s test helpers). */
+ *  test/introspection hook (mirrors `ui/src/plots/image/webgpu/device/device.ts`'s test helpers). */
 export function getLiveSwapchainCount(): number {
   return live.length;
 }

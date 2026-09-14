@@ -4,7 +4,7 @@
  * sync-bus tests):
  *
  *   node --experimental-strip-types --test \
- *     src/lib/cairn-plot/viewport/selection-store.test.ts
+ *     ui/src/state/selection/selection-store.test.ts
  *
  * The store is React-free, so this needs no DOM/React harness.
  */

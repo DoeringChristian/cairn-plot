@@ -4,7 +4,7 @@
  * Repro for the reported bug: enlarge a pane to the single-pane FULLSCREEN
  * overlay, pick a channel in the CHANNELS menu — the pane was thrown OUT of
  * fullscreen. Root cause: a channel change swaps `resolveKey`, the cold
- * re-resolve renders `LeafView`'s "Loading…" placeholder, and the whole
+ * re-resolve renders `GenericLeafView`'s "Loading…" placeholder, and the whole
  * renderer subtree (including `ImagePaneShell`, which held `enlarged` as
  * component-LOCAL state) unmounted — remounting with `enlarged = false`.
  *

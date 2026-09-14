@@ -1,6 +1,6 @@
 /**
  * Unit tests for the PURE half of the GPU histogram compute
- * (`engine/histogram/compute.ts`): host folds, uniform packing, and the deep
+ * (`ui/src/plots/image/webgpu/histogram/compute.ts`): host folds, uniform packing, and the deep
  * CPU twin. Runs under Node's type-stripping runner (no GPU) — the GPU-vs-CPU
  * parity itself is pinned by the `histogram.browser.ts` harness.
  */

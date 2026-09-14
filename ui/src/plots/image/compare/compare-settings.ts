@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // Compare-settings SHAPE + defaults + option enumeration — the pure, app-
 // agnostic half of every visual-media card's "Compare" settings block,
-// extracted from `card-kit/visual-compare-settings.ts` +
+// extracted from `ui/src/plots/image/compare/compare-settings.ts` +
 // `card-kit/CompareSettingsPanel.tsx`.
 //
 // The FORM UI (the actual `<Select>`/`<Slider>`/`<Toggle>` JSX) stays app-

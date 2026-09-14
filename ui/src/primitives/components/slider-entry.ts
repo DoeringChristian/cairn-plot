@@ -1,5 +1,5 @@
 /**
- * `primitives/slider-entry.ts` — pure parse/commit helpers for the toolbar
+ * `ui/src/primitives/components/slider-entry.ts` — pure parse/commit helpers for the toolbar
  * sliders' MANUAL NUMERIC ENTRY (double-click a slider to type a value that may
  * legally EXCEED the slider's min/max — e.g. EXPOSURE 12, OFFSET −3).
  *

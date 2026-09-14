@@ -67,7 +67,7 @@ import type { ColormapName } from "../settings/colormaps/lut";
 export type Colormap = ColormapName;
 export type Interpolation = "auto" | "pixelated" | "crisp-edges";
 // The old per-card "compare mode" enum (side-by-side | split | blend) was
-// replaced by the unified media-compare/mode.ts MediaCompareModeKind
+// replaced by the unified ui/src/plots/image/compare/mode.ts MediaCompareModeKind
 // (normal | split | blend | diff) — see spec-visual-compare.md.
 
 export interface ImageProcessing {

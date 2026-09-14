@@ -1,5 +1,5 @@
 /**
- * Pins the self-describing float pixel buffer (`image/pixel-buffer.ts`): the
+ * Pins the self-describing float pixel buffer (`ui/src/plots/image/runtime/pixel-buffer.ts`): the
  * representation travels WITH the bytes; ambiguous construction is refused
  * loudly (the silent bits-as-values misread was the 2^14 compare-exposure
  * bug); accessors widen half → f32 on read.

@@ -5,7 +5,7 @@
  * per-grid store + a grid-only `SelectionCell`), so a gallery page of STANDALONE
  * `PlotApp` mounts — the common case — had NO selectable panes at all. Selection
  * is now PAGE-WIDE: one document-scoped `SelectionStore` (`getGlobalSelectionStore`)
- * and one `PaneSelectionFrame` around EVERY pane (`plot-node.tsx`'s
+ * and one `PaneSelectionFrame` around EVERY pane (`ui/src/host/PlotNodeView.tsx`'s
  * `PlotNodeView`), so standalone mounts and grid cells select from the SAME
  * mechanism.
  *

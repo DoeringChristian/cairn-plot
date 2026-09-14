@@ -1,5 +1,5 @@
 /**
- * `primitives/plot-to-png.ts` — self-contained, client-side PNG export for
+ * `ui/src/primitives/components/plot-to-png.ts` — self-contained, client-side PNG export for
  * cairn-plot renderers. No external libraries, no CDN (the standalone bundle
  * forbids both): SVG charts rasterize by inlining computed styles onto a clone
  * (an `<svg>` referencing CSS variables like `var(--color-…)` cannot resolve

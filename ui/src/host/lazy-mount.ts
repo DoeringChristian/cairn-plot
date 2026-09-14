@@ -3,7 +3,7 @@
  *
  * Today every leaf in a descriptor tree mounts at load — all images decode, all
  * WebGPU pipelines compile, all 3D scenes build — even for panes far below the
- * fold. `LazyGate` (plot-node.tsx) gates leaf/compare mounting behind a viewport
+ * fold. `LazyGate` (ui/src/host/PlotNodeView.tsx) gates leaf/compare mounting behind a viewport
  * `IntersectionObserver` so a pane only does its work as it nears the viewport.
  *
  * There are three EAGER escape hatches that force everything to mount up front:
@@ -15,7 +15,7 @@
  * This module is the DOM-free, side-effect-free core of that decision so it
  * unit-tests under Node's `--experimental-strip-types` runner. The DOM-reading
  * wrapper (`readEagerMountSignals`) and the `LazyGate` React component that
- * drives the observer both live in plot-node.tsx.
+ * drives the observer both live in ui/src/host/PlotNodeView.tsx.
  */
 
 /** The ambient signals that force EAGER mounting, gathered from the live page. */

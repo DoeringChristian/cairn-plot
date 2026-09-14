@@ -1,11 +1,11 @@
 /**
  * `scale*sample+bias` WGSL shader module (WebGPU backend only) — mirrors
- * `scalebias.glsl.ts` exactly. See `passthrough.wgsl.ts`'s module doc
+ * `ui/src/plots/image/webgpu/shaders/scalebias.wgsl.ts` exactly. See `passthrough.wgsl.ts`'s module doc
  * comment for the shared fullscreen-triangle vertex stage, the WebGPU-vs-
  * WebGL2 `uv.y` flip (reused verbatim here), and why `textureLoad` (not
  * `textureSample`) is used.
  *
- * Exists solely to exercise the two `webgpu/device.ts` bind-group paths the
+ * Exists solely to exercise the two `ui/src/plots/image/webgpu/device/device.ts` bind-group paths the
  * passthrough shader doesn't touch:
  *   - a `Sampler` bind-group entry at logical binding 0 (paired with the
  *     `Texture` entry at the SAME logical binding). This shader never reads

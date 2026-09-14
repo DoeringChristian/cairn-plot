@@ -1,5 +1,5 @@
 /**
- * `primitives/toolbar-fold.ts` — the PURE decision behind `<PlotToolbar>`'s
+ * `ui/src/primitives/components/toolbar-fold.ts` — the PURE decision behind `<PlotToolbar>`'s
  * responsive fold (requirement A). Kept DOM-free so it's unit-testable on its
  * own (see `toolbar-fold.test.ts`); the toolbar supplies the measured widths
  * from a `ResizeObserver` on the pane root and toggles its rendered form on the

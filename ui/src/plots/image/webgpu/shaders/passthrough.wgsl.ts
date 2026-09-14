@@ -1,12 +1,12 @@
 /**
  * Passthrough WGSL shader module (WebGPU backend only — mirrors
- * `passthrough.glsl.ts`'s semantics exactly: samples a texture at logical
+ * `ui/src/plots/image/webgpu/shaders/passthrough.wgsl.ts`'s semantics exactly: samples a texture at logical
  * binding 0 and writes it straight to the render target).
  *
  * ## One WGSL module, two entry points
  * Unlike GLSL (which needs the `#pragma vertex` / `#pragma fragment` split —
- * see `passthrough.glsl.ts`), a single WGSL module can host both an
- * `@vertex` and an `@fragment` entry point. `engine/webgpu/device.ts`
+ * see `ui/src/plots/image/webgpu/shaders/passthrough.wgsl.ts`), a single WGSL module can host both an
+ * `@vertex` and an `@fragment` entry point. `ui/src/plots/image/webgpu/device/device.ts`
  * compiles `shaderWGSL` as ONE `GPUShaderModule` and looks up `vs_main` /
  * `fs_main` by name.
  *
@@ -55,7 +55,7 @@
  * counterparts already compute, so results match.
  *
  * `t_bind0`'s binding NUMBER (`@binding(0)`) is not `0` because it collides
- * with a WGSL "logical binding" — see `engine/webgpu/device.ts`'s doc
+ * with a WGSL "logical binding" — see `ui/src/plots/image/webgpu/device/device.ts`'s doc
  * comment for the `logicalBinding*3 + kindOffset` native-binding scheme
  * that lets ONE `BindGroupEntry[]` (keyed by small integer "logical"
  * bindings, matching the WebGL2 backend's `t_bindN`/`u_bindN` convention)

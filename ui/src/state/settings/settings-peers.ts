@@ -13,7 +13,7 @@
  * keeps the stateless-channel invariant — nothing here outlives a viewport.
  *
  * Anchored on `globalThis` for the same cross-bundle reason as the channels
- * (`viewport-settings.ts`): the three-addon and core IIFE chunks must share
+ * (`ui/src/state/settings/settings-channels.ts`): the three-addon and core IIFE chunks must share
  * one membership map.
  */
 import type { PlotSettings } from "../../settings/schema.ts";

@@ -16,7 +16,7 @@ export const DEFAULT_CHART_HEIGHT = 400;
  * G1 cell-sizing seam. When a `GridNode` sets `rowHeights`, its cells are given
  * an explicit `height:100%` and the grid publishes `fill=true` through this
  * context; a `ChartBox` inside such a cell then fills the cell (`height:100%`)
- * instead of its standalone 400px default. Defined HERE (not in plot-node.tsx)
+ * instead of its standalone 400px default. Defined HERE (not in ui/src/host/PlotNodeView.tsx)
  * so `plot-standalone-helpers` stays renderer-import-free and ChartBox reads a
  * single flag with no extra dependency. Default `false` → behaviour-identical
  * to pre-G1 standalone pages.
