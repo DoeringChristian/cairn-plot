@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en" data-cairn-harness="self-driving">
+  <head>
+    <meta charset="utf-8" />
+    <title>diverging colormap zero-pinning harness</title>
+    <link rel="stylesheet" href="../../../testing/browser/renderers/harness-style.css" />
+    <style>
+      body { font-family: ui-monospace, monospace; font-size: 13px; padding: 16px; background: #111; color: #eee; }
+      #status { font-size: 28px; font-weight: bold; margin-bottom: 12px; }
+      #result div { white-space: pre-wrap; }
+      h2 { font-size: 13px; color: #9cf; margin: 8px 0 2px; }
+      /* A real, non-zero box: Heatmap measures its container via ResizeObserver
+         and paints nothing at zero size. */
+      .host { width: 520px; height: 220px; background: #222; }
+      .host > div { width: 100%; height: 100%; }
+    </style>
+  </head>
+  <body>
+    <h1>Diverging colormap — white is always the ZERO value</h1>
+    <div id="status">RUNNING&hellip;</div>
+    <div id="result"></div>
+    <h2>red-blue, data in [-2, 8] (asymmetric, straddles zero)</h2>
+    <div id="asym" class="host group"></div>
+    <h2>red-blue, data in [2, 8] (one-sided)</h2>
+    <div id="onesided" class="host group"></div>
+    <h2>turbo, data in [-2, 8] (sequential control)</h2>
+    <div id="seq" class="host group"></div>
+    <script type="module" src="./diverging-zero.browser.bundle.js?v=1"></script>
+  </body>
+</html>

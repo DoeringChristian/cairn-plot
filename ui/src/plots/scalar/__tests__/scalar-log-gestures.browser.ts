@@ -28,7 +28,7 @@
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import ScalarPlot from "../backends/svg/ScalarPlot";
-import type { AxisScale, ChartViewState, Series } from "../../types";
+import type { AxisScale, ChartViewState, Series, SeriesPoint } from "../../types";
 import { createHarness } from "../../../testing/harness";
 
 const h = React.createElement;
@@ -49,9 +49,12 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** One series spanning four decades in y, so a log axis has real range. */
 function decadeSeries(): Series[] {
-  const points = [];
+  // `SeriesPoint` is `{x, y}` — an earlier `{step, value}` spelling type-checked
+  // only because the harness bundler (esbuild) strips types without checking
+  // them, so the series silently carried NO plottable points.
+  const points: SeriesPoint[] = [];
   for (let i = 1; i <= 200; i++) {
-    points.push({ step: i, value: Math.pow(10, -1 + (4 * i) / 200) });
+    points.push({ x: i, y: Math.pow(10, -1 + (4 * i) / 200) });
   }
   return [{ key: "s0", label: "s0", color: "#6cf", points }];
 }

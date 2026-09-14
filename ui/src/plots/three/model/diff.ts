@@ -66,6 +66,12 @@ function maxAbs(values: ArrayLike<number>): number {
  * `[0, maxAbs]` for "turbo" (magnitude).
  */
 export function diffDomain(values: ArrayLike<number>, colormap: DiffColormap): [number, number] {
+  // The `red-green` branch is the 3D statement of the same rule the chart
+  // renderers get from `settings/colormaps/diverging-domain.ts`'s
+  // `colorDomainFor`: a diverging map's neutral midpoint means ZERO, so its
+  // domain must be symmetric about zero. Kept separate because the `[0, m]`
+  // branch is a diff-specific MAGNITUDE decision (see `absArray`), not a
+  // colormap-domain one — but the two must never disagree about `red-green`.
   const m = maxAbs(values);
   return colormap === "red-green" ? [-m, m] : [0, m];
 }

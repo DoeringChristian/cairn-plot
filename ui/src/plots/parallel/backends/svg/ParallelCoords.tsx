@@ -4,6 +4,7 @@ import { normalizeValue } from "../../../../primitives/util/normalize";
 import { colormapColor } from "../../../../settings/colormaps/sample";
 import { lutRow } from "../../../../settings/colormaps/lut-sample";
 import { getColormapLUT } from "../../../../settings/colormaps/lut";
+import { colorDomainFor } from "../../../../settings/colormaps/diverging-domain";
 import { useContainerSize } from "../../../../host/hooks/use-container-size";
 import { formatNum } from "../../../../primitives/format";
 import { AXIS } from "../../../../public/theme";
@@ -168,7 +169,19 @@ export default function ParallelCoords({
   );
 
   const colorColIdx = columns.length - 1;
-  const colorDomain = columnDomains[colorColIdx];
+  // The last column drives BOTH its own axis and the line colour, but those two
+  // want different domains: the axis must keep the column's real extent, while
+  // a DIVERGING colormap needs a domain symmetrized about zero so white marks
+  // the zero value. So the colour domain is derived separately here and the
+  // axis keeps reading `columnDomains[colorColIdx]` untouched.
+  // A CATEGORICAL column is excluded: its domain is a synthetic category-index
+  // range in which zero carries no meaning, so re-centering on it would only
+  // scramble the colours.
+  const axisColorDomain = columnDomains[colorColIdx];
+  const colorDomain =
+    axisColorDomain && axisColorDomain.isNumeric
+      ? colorDomainFor(axisColorDomain.min, axisColorDomain.max, colormap)
+      : axisColorDomain;
 
   // Resolve the colormap LUT ONCE (cached) and index it inline per row — one
   // polyline per row previously re-called `colormapColor` (string alloc/parse)

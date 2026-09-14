@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ColormapName } from "../../../types";
 import { getColormapLUT } from "../../../../settings/colormaps/index";
+import { colorDomainFor } from "../../../../settings/colormaps/diverging-domain";
 import { lutRow, normToT } from "../../../../settings/colormaps/lut-sample";
 import { useContainerSize } from "../../../../host/hooks/use-container-size";
 import { formatNum } from "../../../../primitives/format";
@@ -68,8 +69,15 @@ export default function Heatmap({
   const rows = matrix.length;
   const cols = rows > 0 ? matrix[0]!.length : 0;
 
+  // The colour domain the cells AND the colorbar share. On a DIVERGING colormap
+  // `colorDomainFor` symmetrizes it about zero so white is the zero point rather
+  // than the middle of the data — including when `min`/`max` were passed
+  // explicitly (see its doc: magnitude is respected, asymmetry is not).
   const { lo, hi } = useMemo(() => {
-    if (min != null && max != null) return { lo: min, hi: max };
+    if (min != null && max != null) {
+      const d = colorDomainFor(min, max, colormap);
+      return { lo: d.min, hi: d.max };
+    }
     let l = Infinity;
     let h = -Infinity;
     for (const row of matrix)
@@ -82,8 +90,9 @@ export default function Heatmap({
       l = 0;
       h = 1;
     }
-    return { lo: min ?? l, hi: max ?? h };
-  }, [matrix, min, max]);
+    const d = colorDomainFor(min ?? l, max ?? h, colormap);
+    return { lo: d.min, hi: d.max };
+  }, [matrix, min, max, colormap]);
 
   // Paint the cells into an offscreen-sized canvas (native cols×rows), CSS
   // scales it to the plot rect (crisp pixelation for discrete cells). The

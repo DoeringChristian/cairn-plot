@@ -10,6 +10,13 @@
  *
  *   value ──normToT──▶ t ──lutRow──▶ row 0..255 ──▶ LUT[row*3 .. +2]
  *
+ * The `[min, max]` handed to `normToT` is the DOMAIN decision, and it lives one
+ * step earlier, in `diverging-domain.ts`'s `colorDomainFor`: a diverging map
+ * (`red-blue` / `red-green`) is normalized over a domain symmetrized about zero
+ * so its white midpoint marks the zero VALUE. Nothing about that belongs here —
+ * `normToT` stays a pure linear `[min,max] → [0,1]` map, which is what lets a
+ * colorbar drawn from the same `min`/`max` agree with the pixels.
+ *
  * `lutRow` is the single clamp+round+degenerate point, so ALL sites agree on
  * zero-span / NaN / ±Inf domains. Both `lutRow` and `normToT` are allocation-free
  * (scalars in, scalar out) so the hot per-element loops keep their

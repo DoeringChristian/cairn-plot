@@ -12,6 +12,7 @@ import type { ParetoDirection } from "../../../transforms/pareto";
 import { computeParetoFront } from "../../../transforms/pareto";
 import { getColormapLUT } from "../../../../settings/colormaps/lut";
 import { lutRow, normToT } from "../../../../settings/colormaps/lut-sample";
+import { colorDomainFor } from "../../../../settings/colormaps/diverging-domain";
 import { useContainerSize } from "../../../../host/hooks/use-container-size";
 import { formatNum } from "../../../../primitives/format";
 import { niceTicks, paddedDomain } from "../../../../public/theme";
@@ -107,14 +108,19 @@ export default function ScatterPlot({
         ? { min: lo - 0.5, max: hi + 0.5 }
         : { min: lo, max: hi };
     };
+    // The colour domain feeds BOTH the per-point LUT lookup and the colorbar's
+    // tick labels below, so it is symmetrized here — on a DIVERGING colormap
+    // `colorDomainFor` re-centres it on zero, keeping white at the zero value
+    // instead of at the middle of the data.
+    const rawColor = makeDomain(
+      points.map((p) => p.color).filter((v): v is number => v != null),
+    );
     return {
       xDomain: makeDomain(points.map((p) => p.x)),
       yDomain: makeDomain(points.map((p) => p.y)),
-      colorDomain: makeDomain(
-        points.map((p) => p.color).filter((v): v is number => v != null),
-      ),
+      colorDomain: colorDomainFor(rawColor.min, rawColor.max, colormap),
     };
-  }, [points]);
+  }, [points, colormap]);
 
   const paretoFront = useMemo(() => {
     if (!pareto?.show) return [];
