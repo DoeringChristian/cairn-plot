@@ -64,7 +64,7 @@ import {
 } from "./plot-context.ts";
 import { PlotCell } from "./PlotCell.tsx";
 import { ReactBackendOutlet } from "./react-backend.ts";
-import { withoutSettingsPlumbing } from "./presentation.ts";
+import { leafPresentation } from "./presentation.ts";
 import { getReactPlotType, onRegisterReactPlotType } from "../plots/react-registry.ts";
 import {
   comparisonType,
@@ -569,7 +569,10 @@ function GenericLeafView({ node }: { node: PlotLeafNode }) {
     <ReactBackendOutlet
       backends={registered.backends}
       environment={browserRenderEnvironment()}
-      presentation={withoutSettingsPlumbing(presentation as Record<string, unknown>)}
+      presentation={leafPresentation(
+        node.props as Record<string, unknown> | undefined,
+        presentation as Record<string, unknown>,
+      )}
       settings={registered.definition.projectSettings(
         (cell?.syncedSettings ?? {}) as import("../plots/contracts.ts").SettingsRecord,
       )}
