@@ -1,47 +1,27 @@
 # Cairn integration boundary
 
-Cairn supplies authored plot descriptors and one artifact data source. Cairn
-Plot owns all rendering and interactive cell behavior.
+Cairn uses cairn-plot from **Python only**, as `cairn.plot` (the `cairn-track[plot]`
+extra): notebook elements and self-contained HTML reports. The Cairn browser viewer
+(cairn-ui) does not depend on cairn-plot; it draws its own cards.
+
+In `cairn.plot`, a Cairn `DataRef` (`run["tag"]`) lowers to an artifact reference.
+A baked report inlines the referenced bytes into its content store; a live report
+keeps the reference and fetches it from a Cairn server when opened (see
+`cairn.query_url`). cairn-plot never renders or uploads derived images back into
+Cairn.
+
+Other hosts that embed the browser renderer directly use the public API:
 
 ```tsx
 import { PlotHost, createEndpointDataSource } from "cairn-plot";
 
-const dataSource = createEndpointDataSource(api.artifactUrl, {
-  fetch: api.authenticatedFetch,
-});
+const dataSource = createEndpointDataSource(artifactUrl, { fetch: authenticatedFetch });
 
 <PlotHost spec={spec} dataSource={dataSource} />;
 ```
 
-Imperative hosts use the same implementation:
-
-```ts
-const plot = mountPlot(element, { spec, dataSource });
-plot.update({ spec: nextSpec, dataSource });
-saveWorkspace(plot.getSession());
-plot.destroy();
-```
-
-Cairn owns runs, series, training steps, artifact identity, card chrome,
-downloads and persistence location. Cairn Plot owns internal plot cells,
-settings, grid/stack interpretation, comparison, linking, selection, stage,
-decoding, resources and concrete renderers.
-
-Cairn's standalone plot/report surface must not import cell settings stores,
-renderer components, registries, camera synchronization or comparison internals.
-There is no Cairn-specific compatibility layer inside cairn-plot. Host
-integrations use the public API. The supported browser exports are
-`PlotHost`, `mountPlot`, `createEndpointDataSource`, `DataSource`, the recursive
-specification types, `PlotSession`, and `SessionPersistence`. Cairn may hydrate a
-runtime session explicitly with `initialSession`/`restoreSession`, or
-inject a persistence adapter. Persistence is disabled by default and can be
-made explicit with `persistence={false}`; this never disables the in-memory
-session or manual import/export.
-
-The injected fetch function is used for byte/decode requests. `artifactUrl`
-must still return a URL that browser elements can load directly (for example a
-same-origin cookie-authenticated or signed URL); an `<img>` cannot attach the
-fetch function's Authorization header.
-
-The Python integration remains an authoring concern: a Cairn `DataRef` lowers
-to an artifact reference. It does not render or upload derived images.
+The supported browser exports are `PlotHost`, `mountPlot`,
+`createEndpointDataSource`, `DataSource`, the recursive specification types,
+`PlotSession`, and `SessionPersistence`. `artifactUrl` must return a URL that
+browser elements can load directly (same-origin cookie-authenticated or signed);
+an `<img>` cannot attach the injected fetch function's Authorization header.
