@@ -602,7 +602,7 @@ class Heatmap(Component):
         _check_colormap(colormap)
         _check_data_mode(data_mode)
         if _is_data_ref(z):
-            arr = z.run.artifact(z.tag, step=z.step)
+            arr = z.run.media(z.tag, step=z.step).load()
             matrix = _heatmap_matrix_from_raw(arr)
             self._source: Any = z
             self._data_mode = data_mode
@@ -1242,7 +1242,7 @@ class Image(Component):
             if data_mode == "endpoint":
                 self._source = data
             else:
-                raw = data.run.artifact_bytes(data.tag, step=data.step)
+                raw = data.run.media(data.tag, step=data.step).bytes()
                 self._store = {hash_: _store_entry(raw, mime)}
             return
 
@@ -1384,7 +1384,7 @@ class PointCloud(Component):
             if data_mode == "endpoint":
                 self._source = data
             else:
-                raw = data.run.artifact_bytes(data.tag, step=data.step)
+                raw = data.run.media(data.tag, step=data.step).bytes()
                 self._store = {hash_: _store_entry(raw, "application/octet-stream")}
             return
 
@@ -1518,7 +1518,7 @@ class Mesh(Component):
             if data_mode == "endpoint":
                 self._source = vertices
             else:
-                raw = vertices.run.artifact_bytes(vertices.tag, step=vertices.step)
+                raw = vertices.run.media(vertices.tag, step=vertices.step).bytes()
                 self._store = {hash_: _store_entry(raw, "application/octet-stream")}
             return
 
@@ -1643,7 +1643,7 @@ class Volume(Component):
             if data_mode == "endpoint":
                 self._source = grid
             else:
-                raw = grid.run.artifact_bytes(grid.tag, step=grid.step)
+                raw = grid.run.media(grid.tag, step=grid.step).bytes()
                 self._store = {hash_: _store_entry(raw, "application/octet-stream")}
             return
 
@@ -1753,7 +1753,7 @@ class Boxes(Component):
             if data_mode == "endpoint":
                 self._source = mins
             else:
-                raw = mins.run.artifact_bytes(mins.tag, step=mins.step)
+                raw = mins.run.media(mins.tag, step=mins.step).bytes()
                 self._store = {hash_: _store_entry(raw, "application/octet-stream")}
             return
 

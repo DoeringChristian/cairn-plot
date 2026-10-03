@@ -463,7 +463,7 @@ def _figure_json_from_plotly(fig: Any) -> dict[str, Any]:
 def _table_json_from_ref(ref: Any) -> dict[str, Any]:
     """A `run[tag]` table artifact → `{columns,data,truncated?}` (the exact
     `handlers/table.py` blob format the Table renderer consumes)."""
-    tbl = ref.run.artifact(ref.tag, step=ref.step)
+    tbl = ref.run.media(ref.tag, step=ref.step).load()
     if not isinstance(tbl, dict) or "columns" not in tbl:
         raise ValueError(
             f"table artifact {ref.tag!r} did not deserialize to a "
@@ -476,20 +476,9 @@ def _table_json_from_ref(ref: Any) -> dict[str, Any]:
 
 
 def _artifact_info_of(ref: Any) -> Any:
-    """The `ArtifactInfo` (hash + mime + metadata) behind `run[tag][step?]`."""
-    matches = [
-        ai
-        for ai in ref.run.artifacts()
-        if ai.name == ref.tag and (ref.step is None or ai.step == ref.step)
-    ]
-    if not matches:
-        raise KeyError(
-            f"No artifact named {ref.tag!r}"
-            + (f" at step {ref.step}" if ref.step is not None else "")
-            + f" on run {ref.run_id!r}."
-        )
-    # Highest step (the "latest") when unspecified.
-    return max(matches, key=lambda a: a.step if a.step is not None else -1)
+    """The media point (hash + mime + metadata) behind `run[tag][step?]`:
+    the highest step when unspecified (`Run.media`)."""
+    return ref.run.media(ref.tag, step=ref.step)
 
 
 def _parse_meta(meta: Any) -> dict[str, Any]:
